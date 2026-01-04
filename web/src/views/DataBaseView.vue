@@ -1,6 +1,6 @@
 <template>
   <div class="database-container layout-container">
-    <HeaderComponent title="文档知识库" :loading="state.loading">
+    <HeaderComponent title="文档知识库" :loading="dbState.listLoading">
       <template #actions>
         <a-button type="primary" @click="state.openNewDatabaseModel=true">
           新建知识库
@@ -8,7 +8,7 @@
       </template>
     </HeaderComponent>
 
-    <a-modal :open="state.openNewDatabaseModel" title="新建知识库" @ok="createDatabase" @cancel="cancelCreateDatabase" class="new-database-modal" width="800px">
+    <a-modal :open="state.openNewDatabaseModel" title="新建知识库" @ok="handleCreateDatabase" @cancel="cancelCreateDatabase" class="new-database-modal" width="800px">
 
       <!-- 知识库类型选择 -->
       <h3>知识库类型<span style="color: var(--color-error-500)">*</span></h3>
@@ -24,13 +24,6 @@
           <div class="card-header">
             <component :is="getKbTypeIcon(typeKey)" class="type-icon" />
             <span class="type-title">{{ getKbTypeLabel(typeKey) }}</span>
-            <a-tooltip
-              v-if="typeKey === 'chroma'"
-              title="Chroma 已标记为弃用状态，建议使用 Milvus 替代。同时会在下个正式版本中移除。"
-              placement="top"
-            >
-              <span class="deprecated-badge">弃用</span>
-            </a-tooltip>
           </div>
           <div class="card-description">{{ typeInfo.description }}</div>
         </div>
@@ -81,8 +74,9 @@
 
       <h3 style="margin-top: 20px;">知识库描述</h3>
       <p style="color: var(--gray-700); font-size: 14px;">在智能体流程中，这里的描述会作为工具的描述。智能体会根据知识库的标题和描述来选择合适的工具。所以这里描述的越详细，智能体越容易选择到合适的工具。</p>
-      <a-textarea
-        v-model:value="newDatabase.description"
+      <AiTextarea
+        v-model="newDatabase.description"
+        :name="newDatabase.name"
         placeholder="新建知识库描述"
         :auto-size="{ minRows: 3, maxRows: 10 }"
       />
@@ -102,7 +96,7 @@
       </div>
 
       <div
-        v-if="['chroma', 'milvus'].includes(newDatabase.kb_type)"
+        v-if="['milvus'].includes(newDatabase.kb_type)"
         class="reranker-config"
       >
         <div class="reranker-row">
@@ -161,12 +155,12 @@
       </div>
       <template #footer>
         <a-button key="back" @click="cancelCreateDatabase">取消</a-button>
-        <a-button key="submit" type="primary" :loading="state.creating" @click="createDatabase">创建</a-button>
+        <a-button key="submit" type="primary" :loading="dbState.creating" @click="handleCreateDatabase">创建</a-button>
       </template>
     </a-modal>
 
     <!-- 加载状态 -->
-    <div v-if="state.loading" class="loading-container">
+    <div v-if="dbState.listLoading" class="loading-container">
       <a-spin size="large" />
       <p>正在加载知识库...</p>
     </div>
@@ -224,8 +218,7 @@
           >
             {{ getKbTypeLabel(database.kb_type || 'lightrag') }}
           </a-tag>
-          </div>
-
+        </div>
         <!-- <button @click="deleteDatabase(database.collection_name)">删除</button> -->
       </div>
     </div>
@@ -235,32 +228,35 @@
 <script setup>
 import { ref, onMounted, reactive, watch, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router';
+import { storeToRefs } from 'pinia';
 import { useConfigStore } from '@/stores/config';
-import { message } from 'ant-design-vue'
-import { Database, Zap, FileDigit,  Waypoints, Building2 } from 'lucide-vue-next';
+import { useDatabaseStore } from '@/stores/database';
+import { Database, FileDigit, Waypoints, Building2, DatabaseZap } from 'lucide-vue-next';
 import { LockOutlined, InfoCircleOutlined, QuestionCircleOutlined, PlusOutlined } from '@ant-design/icons-vue';
-import { databaseApi, typeApi } from '@/apis/knowledge_api';
+import { typeApi } from '@/apis/knowledge_api';
 import HeaderComponent from '@/components/HeaderComponent.vue';
 import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue';
 import EmbeddingModelSelector from '@/components/EmbeddingModelSelector.vue';
 import dayjs, { parseToShanghai } from '@/utils/time';
+import AiTextarea from '@/components/AiTextarea.vue';
 
 const route = useRoute()
 const router = useRouter()
-const databases = ref([])
 const configStore = useConfigStore()
+const databaseStore = useDatabaseStore()
+
+// 使用 store 的状态
+const { databases, state: dbState } = storeToRefs(databaseStore)
 
 const state = reactive({
-  loading: false,
-  creating: false,
   openNewDatabaseModel: false,
 })
 
 
 // 语言选项（值使用英文，以保证后端/LightRAG 兼容；标签为中英文方便理解）
 const languageOptions = [
-  { label: '英语 English', value: 'English' },
   { label: '中文 Chinese', value: 'Chinese' },
+  { label: '英语 English', value: 'English' },
   { label: '日语 Japanese', value: 'Japanese' },
   { label: '韩语 Korean', value: 'Korean' },
   { label: '德语 German', value: 'German' },
@@ -279,7 +275,7 @@ const createEmptyDatabaseForm = () => ({
   kb_type: 'milvus',
   is_private: false,
   storage: '',
-  language: 'English',
+  language: 'Chinese',
   llm_info: {
     provider: '',
     model_name: ''
@@ -301,7 +297,7 @@ const rerankerOptions = computed(() =>
   }))
 )
 
-const isVectorKb = computed(() => ['chroma', 'milvus'].includes(newDatabase.kb_type))
+const isVectorKb = computed(() => ['milvus'].includes(newDatabase.kb_type))
 
 const llmModelSpec = computed(() => {
   const provider = newDatabase.llm_info?.provider || ''
@@ -315,26 +311,8 @@ const llmModelSpec = computed(() => {
 // 支持的知识库类型
 const supportedKbTypes = ref({})
 
-// 有序的知识库类型（Chroma 排在最后）
-const orderedKbTypes = computed(() => {
-  const types = { ...supportedKbTypes.value }
-  const ordered = {}
-  const chromaData = types.chroma
-
-  // 先添加除了 Chroma 之外的所有类型
-  Object.keys(types).forEach(key => {
-    if (key !== 'chroma') {
-      ordered[key] = types[key]
-    }
-  })
-
-  // 最后添加 Chroma（如果存在）
-  if (chromaData) {
-    ordered.chroma = chromaData
-  }
-
-  return ordered
-})
+// 有序的知识库类型
+const orderedKbTypes = computed(() => supportedKbTypes.value)
 
 // 加载支持的知识库类型
 const loadSupportedKbTypes = async () => {
@@ -356,32 +334,6 @@ const loadSupportedKbTypes = async () => {
 
 // 重排序模型信息现在直接从 configStore.config.reranker_names 获取，无需单独加载
 
-const loadDatabases = () => {
-  state.loading = true
-  // loadGraph()
-  databaseApi.getDatabases()
-    .then(data => {
-      console.log(data)
-      // 按照创建时间排序，最新的在前面
-      databases.value = data.databases.sort((a, b) => {
-        const timeA = parseToShanghai(a.created_at)
-        const timeB = parseToShanghai(b.created_at)
-        if (!timeA && !timeB) return 0
-        if (!timeA) return 1
-        if (!timeB) return -1
-        return timeB.valueOf() - timeA.valueOf() // 降序排列，最新的在前面
-      })
-      state.loading = false
-    })
-    .catch(error => {
-      console.error('加载数据库列表失败:', error);
-      if (error.message.includes('权限')) {
-        message.error('需要管理员权限访问知识库')
-      }
-      state.loading = false
-    })
-}
-
 const resetNewDatabase = () => {
   Object.assign(newDatabase, createEmptyDatabaseForm())
 }
@@ -394,8 +346,7 @@ const cancelCreateDatabase = () => {
 const getKbTypeLabel = (type) => {
   const labels = {
     lightrag: 'LightRAG',
-    chroma: 'Chroma',
-    milvus: 'Milvus'
+    milvus: 'CommonRAG'
   }
   return labels[type] || type
 }
@@ -403,8 +354,7 @@ const getKbTypeLabel = (type) => {
 const getKbTypeIcon = (type) => {
   const icons = {
     lightrag: Waypoints,
-    chroma: FileDigit,
-    milvus: Building2
+    milvus: DatabaseZap
   }
   return icons[type] || Database
 }
@@ -412,7 +362,6 @@ const getKbTypeIcon = (type) => {
 const getKbTypeColor = (type) => {
   const colors = {
     lightrag: 'purple',
-    chroma: 'orange',
     milvus: 'red'
   }
   return colors[type] || 'blue'
@@ -454,7 +403,7 @@ const handleKbTypeChange = (type) => {
   console.log('知识库类型改变:', type)
   resetNewDatabase()
   newDatabase.kb_type = type
-  if (!['chroma', 'milvus'].includes(type)) {
+  if (!['milvus'].includes(type)) {
     newDatabase.reranker.enabled = false
   }
 }
@@ -472,19 +421,8 @@ const handleLLMSelect = (spec) => {
   newDatabase.llm_info.model_name = modelName
 }
 
-const createDatabase = () => {
-  if (!newDatabase.name?.trim()) {
-    message.error('数据库名称不能为空')
-    return
-  }
-
-  if (!newDatabase.kb_type) {
-    message.error('请选择知识库类型')
-    return
-  }
-
-  state.creating = true
-
+// 构建请求数据（只负责表单数据转换）
+const buildRequestData = () => {
   const requestData = {
     database_name: newDatabase.name.trim(),
     description: newDatabase.description?.trim() || '',
@@ -495,18 +433,12 @@ const createDatabase = () => {
     }
   }
 
-  // 添加类型特有的配置
-  if (newDatabase.kb_type === 'chroma' || newDatabase.kb_type === 'milvus') {
+  // 根据类型添加特定配置
+  if (['milvus'].includes(newDatabase.kb_type)) {
     if (newDatabase.storage) {
       requestData.additional_params.storage = newDatabase.storage
     }
-
     if (newDatabase.reranker.enabled) {
-      if (!newDatabase.reranker.model) {
-        message.error('请选择重排序模型')
-        state.creating = false
-        return
-      }
       requestData.additional_params.reranker_config = {
         enabled: true,
         model: newDatabase.reranker.model,
@@ -518,7 +450,6 @@ const createDatabase = () => {
 
   if (newDatabase.kb_type === 'lightrag') {
     requestData.additional_params.language = newDatabase.language || 'English'
-    // 添加LLM信息到请求数据
     if (newDatabase.llm_info.provider && newDatabase.llm_info.model_name) {
       requestData.llm_info = {
         provider: newDatabase.llm_info.provider,
@@ -527,21 +458,19 @@ const createDatabase = () => {
     }
   }
 
-  databaseApi.createDatabase(requestData)
-    .then(data => {
-      console.log('创建成功:', data)
-      loadDatabases()
-      resetNewDatabase()
-      message.success('创建成功')
-    })
-    .catch(error => {
-      console.error('创建数据库失败:', error)
-      message.error(error.message || '创建失败')
-    })
-    .finally(() => {
-      state.creating = false
-      state.openNewDatabaseModel = false
-    })
+  return requestData
+}
+
+// 创建按钮处理
+const handleCreateDatabase = async () => {
+  const requestData = buildRequestData()
+  try {
+    await databaseStore.createDatabase(requestData)
+    resetNewDatabase()
+    state.openNewDatabaseModel = false
+  } catch (error) {
+    // 错误已在 store 中处理
+  }
 }
 
 const navigateToDatabase = (databaseId) => {
@@ -584,15 +513,15 @@ watch(
   }
 )
 
-watch(() => route.path, (newPath, oldPath) => {
+watch(() => route.path, (newPath) => {
   if (newPath === '/database') {
-    loadDatabases();
+    databaseStore.loadDatabases();
   }
 });
 
 onMounted(() => {
   loadSupportedKbTypes()
-  loadDatabases()
+  databaseStore.loadDatabases()
   // 重排序模型信息现在直接从 configStore 获取，无需单独加载
 })
 
@@ -803,14 +732,7 @@ onMounted(() => {
       .top {
         .info {
           h3 {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
-
-            .kb-type-tag {
-              margin-left: auto;
-            }
+            display: block;
           }
         }
       }
@@ -883,6 +805,9 @@ onMounted(() => {
     }
 
     .info {
+      flex: 1;
+      min-width: 0;
+
       h3, p {
         margin: 0;
         color: var(--gray-10000);
@@ -893,6 +818,9 @@ onMounted(() => {
         font-weight: 600;
         letter-spacing: -0.02em;
         line-height: 1.4;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       p {
@@ -906,7 +834,7 @@ onMounted(() => {
         font-weight: 400;
 
         .created-time-inline {
-          color: var(--gray-500);
+          color: var(--gray-700);
           font-size: 11px;
           font-weight: 400;
           background: var(--gray-50);

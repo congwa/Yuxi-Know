@@ -8,6 +8,19 @@
       <div class="canvas-content">
         <slot name="content" />
       </div>
+      <!-- Statistical Info Panel -->
+      <div class="graph-stats-panel" v-if="graphData.nodes.length > 0">
+        <div class="stat-item">
+          <span class="stat-label">节点</span>
+          <span class="stat-value">{{ graphData.nodes.length }}</span>
+          <span v-if="graphInfo?.node_count" class="stat-total">/ {{ graphInfo.node_count }}</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-label">边</span>
+          <span class="stat-value">{{ graphData.edges.length }}</span>
+          <span v-if="graphInfo?.edge_count" class="stat-total">/ {{ graphInfo.edge_count }}</span>
+        </div>
+      </div>
       <div v-if="$slots.bottom" class="overlay bottom">
         <slot name="bottom" />
       </div>
@@ -26,6 +39,10 @@ const props = defineProps({
     required: true,
     default: () => ({ nodes: [], edges: [] })
   },
+  graphInfo: {
+    type: Object,
+    default: () => ({})
+  },
   labelField: { type: String, default: 'name' },
   autoFit: { type: Boolean, default: true },
   autoResize: { type: Boolean, default: true },
@@ -37,7 +54,7 @@ const props = defineProps({
   highlightKeywords: { type: Array, default: () => [] }
 })
 
-const emit = defineEmits(['ready', 'data-rendered'])
+const emit = defineEmits(['ready', 'data-rendered', 'node-click', 'edge-click', 'canvas-click'])
 
 const container = ref(null)
 const rootEl = ref(null)
@@ -51,14 +68,13 @@ const MAX_RETRIES = 5
 const defaultLayout = {
   type: 'd3-force',
   preventOverlap: true,
-  // 性能友好参数（参考 GraphView.vue）
   alphaDecay: 0.1,
   alphaMin: 0.01,
-  velocityDecay: 0.7,
-  iterations: 100,
+  velocityDecay: 0.6,
+  iterations: 150,
   force: {
     center: { x: 0.5, y: 0.5, strength: 0.1 },
-    charge: { strength: -400, distanceMax: 400 },
+    charge: { strength: -400, distanceMax: 600 },
     link: { distance: 100, strength: 0.8 },
   },
   collide: { radius: 40, strength: 0.8, iterations: 3 },
@@ -88,6 +104,7 @@ function formatData() {
     data: {
       label: n[props.labelField] ?? n.name ?? String(n.id),
       degree: degrees.get(String(n.id)) || 0,
+      original: n // 保存原始数据
     },
   }))
 
@@ -95,7 +112,10 @@ function formatData() {
     id: e.id ? String(e.id) : `edge-${idx}`,
     source: String(e.source_id),
     target: String(e.target_id),
-    data: { label: e.type ?? '' },
+    data: {
+      label: e.type ?? '',
+      original: e // 保存原始数据
+    },
   }))
 
   return { nodes, edges }
@@ -138,7 +158,7 @@ function initGraph() {
         labelFill: getCSSVariable('--gray-700'),
         labelWordWrap: true, // enable label ellipsis
         labelMaxWidth: '300%',
-        size: (d) => {
+          size: (d) => {
           if (!props.sizeByDegree) return 24
           const deg = d.data.degree || 0
           return Math.min(15 + deg * 5, 50)
@@ -185,9 +205,35 @@ function initGraph() {
         unselectedState: 'inactive', // 未选中节点状态
         multiple: true,
         trigger: ['shift'],
+        // 禁用默认的选中效果，避免与自定义事件冲突
+        disableDefault: false,
       }
     ],
   })
+
+  // 绑定事件
+  graphInstance.on('node:click', (evt) => {
+    const { target } = evt
+    // 获取节点ID
+    const nodeId = target.id
+    const nodeData = graphInstance.getNodeData(nodeId)
+    emit('node-click', nodeData)
+  })
+
+  graphInstance.on('edge:click', (evt) => {
+    const { target } = evt
+    const edgeId = target.id
+    const edgeData = graphInstance.getEdgeData(edgeId)
+    emit('edge-click', edgeData)
+  })
+
+  graphInstance.on('canvas:click', (evt) => {
+    // 只有点击画布空白处才触发
+    if (!evt.target) {
+        emit('canvas-click')
+    }
+  })
+
   emit('ready', graphInstance)
 }
 
@@ -195,14 +241,33 @@ function setGraphData() {
   if (!graphInstance) initGraph()
   if (!graphInstance) return
   const data = formatData()
+
+  console.log('开始设置图谱数据:', {
+    nodes: data.nodes.length,
+    edges: data.edges.length
+  })
+
   graphInstance.setData(data)
   graphInstance.render()
 
-  // 应用关键词高亮
+  // 手动触发布局重新计算，确保节点分布
   setTimeout(() => {
-    applyHighlightKeywords()
-    emit('data-rendered')
-  }, 100)
+    try {
+      if (graphInstance && graphInstance.layout) {
+        graphInstance.layout()
+        console.log('触发布局重新计算')
+      }
+    } catch (error) {
+      console.warn('布局重新计算失败:', error)
+    }
+
+    // 等待力导向布局稳定后再应用高亮
+    setTimeout(() => {
+      applyHighlightKeywords()
+      emit('data-rendered')
+      console.log('图谱渲染完成，布局已稳定')
+    }, 1500)
+  }, 10)  // 等待 10ms 确保布局完成
 }
 
 // 关键词高亮功能
@@ -364,11 +429,50 @@ defineExpose({
   position: relative;
   width: 100%;
   height: 100%;
-  background-color: var(--gray-0);
+  // background-color: var(--gray-0);
 
   .graph-canvas {
     width: 100%;
     height: 100%;
+  }
+
+  .graph-stats-panel {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 6px 12px;
+    background: var(--color-trans-light);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+    pointer-events: auto;
+    z-index: 10;
+    font-size: 13px;
+    backdrop-filter: blur(4px);
+
+    .stat-item {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+
+      .stat-label {
+        color: var(--color-text-secondary);
+        font-weight: 500;
+      }
+
+      .stat-value {
+        color: var(--color-text);
+        font-weight: 600;
+      }
+
+      .stat-total {
+        color: var(--color-text-quaternary);
+        font-size: 11px;
+      }
+    }
   }
 
   .slots {

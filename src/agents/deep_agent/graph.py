@@ -1,12 +1,16 @@
 """Deep Agent - 基于create_deep_agent的深度分析智能体"""
 
-from deepagents import create_deep_agent
-from langchain.agents.middleware import ModelRequest, dynamic_prompt
+from deepagents.middleware.filesystem import FilesystemMiddleware
+from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
+from deepagents.middleware.subagents import SubAgentMiddleware
+from langchain.agents import create_agent
+from langchain.agents.middleware import ModelRequest, SummarizationMiddleware, TodoListMiddleware, dynamic_prompt
 
 from src.agents.common import BaseAgent, load_chat_model
-from src.agents.common.middlewares import context_based_model, inject_attachment_context
+from src.agents.common.middlewares import inject_attachment_context
 from src.agents.common.tools import search
 
+from .context import DeepContext
 from .prompts import DEEP_PROMPT
 
 search_tools = [search]
@@ -14,14 +18,12 @@ search_tools = [search]
 
 research_sub_agent = {
     "name": "research-agent",
-    "description": (
-        "用于研究更深入的问题。一次只给这个研究员一个主题。不要向这个研究员传递多个子问题。"
-        "相反，你应该将一个大主题分解成必要的组成部分，然后并行调用多个研究代理，每个子问题一个。"
-    ),
+    "description": ("利用搜索工具，用于研究更深入的问题。将调研结果写入到主题研究文件中。"),
     "system_prompt": (
         "你是一位专注的研究员。你的工作是根据用户的问题进行研究。"
         "进行彻底的研究，然后用详细的答案回复用户的问题，只有你的最终答案会被传递给用户。"
         "除了你的最终信息，他们不会知道任何其他事情，所以你的最终报告应该就是你的最终信息！"
+        "将调研结果保存到主题研究文件中 /sub_research/xxx.md 中。"
     ),
     "tools": search_tools,
 }
@@ -57,6 +59,7 @@ def context_aware_prompt(request: ModelRequest) -> str:
 class DeepAgent(BaseAgent):
     name = "深度分析智能体"
     description = "具备规划、深度分析和子智能体协作能力的智能体，可以处理复杂的多步骤任务"
+    context_schema = DeepContext
     capabilities = [
         "file_upload",
         "todo",
@@ -81,15 +84,44 @@ class DeepAgent(BaseAgent):
         # 获取上下文配置
         context = self.context_schema.from_file(module_name=self.module_name)
 
+        model = load_chat_model(context.model)
+        sub_model = load_chat_model(context.subagents_model)
+        tools = await self.get_tools()
+
         # 使用 create_deep_agent 创建深度智能体
-        graph = create_deep_agent(
-            model=load_chat_model(context.model),
-            tools=await self.get_tools(),
-            subagents=[critique_sub_agent, research_sub_agent],
+        graph = create_agent(
+            model=model,
+            tools=tools,
+            system_prompt=context.system_prompt,
             middleware=[
-                context_based_model,  # 动态模型选择
                 context_aware_prompt,  # 动态系统提示词
                 inject_attachment_context,  # 附件上下文注入
+                TodoListMiddleware(),
+                FilesystemMiddleware(),
+                SubAgentMiddleware(
+                    default_model=sub_model,
+                    default_tools=tools,
+                    subagents=[critique_sub_agent, research_sub_agent],
+                    default_middleware=[
+                        TodoListMiddleware(),  # 子智能体也有 todo 列表
+                        FilesystemMiddleware(),  # 当前的两个文件系统是隔离的
+                        SummarizationMiddleware(
+                            model=sub_model,
+                            trigger=("tokens", 110000),
+                            keep=("messages", 10),
+                            trim_tokens_to_summarize=None,
+                        ),
+                        PatchToolCallsMiddleware(),
+                    ],
+                    general_purpose_agent=True,
+                ),
+                SummarizationMiddleware(
+                    model=model,
+                    trigger=("tokens", 110000),
+                    keep=("messages", 10),
+                    trim_tokens_to_summarize=None,
+                ),
+                PatchToolCallsMiddleware(),
             ],
             checkpointer=await self._get_checkpointer(),
         )

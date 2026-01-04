@@ -25,7 +25,6 @@ knowledge = APIRouter(prefix="/knowledge", tags=["knowledge"])
 media_types = {
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    ".doc": "application/msword",
     ".txt": "text/plain",
     ".md": "text/markdown",
     ".json": "application/json",
@@ -96,7 +95,7 @@ async def create_database(
 
         def normalize_reranker_config(kb: str, params: dict) -> None:
             reranker_cfg = params.get("reranker_config")
-            if kb not in {"chroma", "milvus"}:
+            if kb not in {"milvus"}:
                 if kb == "lightrag" and reranker_cfg:
                     logger.warning("LightRAG does not support reranker, ignoring reranker_config")
                     params.pop("reranker_config", None)
@@ -320,7 +319,7 @@ async def add_documents(
 
         item_type = "URL" if content_type == "url" else "文件"
         failed_count = len([_p for _p in processed_items if _p.get("status") == "failed"])
-        success_items = [_p for _p in processed_items if _p.get("status") == "done"]
+        # success_items = [_p for _p in processed_items if _p.get("status") == "done"]
         summary = {
             "db_id": db_id,
             "item_type": item_type,
@@ -395,10 +394,17 @@ async def get_document_content(db_id: str, doc_id: str, current_user: User = Dep
 
 @knowledge.delete("/databases/{db_id}/documents/{doc_id}")
 async def delete_document(db_id: str, doc_id: str, current_user: User = Depends(get_admin_user)):
-    """删除文档"""
+    """删除文档或文件夹"""
     logger.debug(f"DELETE document {doc_id} info in {db_id}")
     try:
         file_meta_info = await knowledge_base.get_file_basic_info(db_id, doc_id)
+
+        # Check if it is a folder
+        is_folder = file_meta_info.get("meta", {}).get("is_folder", False)
+        if is_folder:
+            await knowledge_base.delete_folder(db_id, doc_id)
+            return {"message": "文件夹删除成功"}
+
         file_name = file_meta_info.get("meta", {}).get("filename")
 
         # 尝试从MinIO删除文件，如果失败（例如旧知识库没有MinIO实例），则忽略
@@ -550,6 +556,7 @@ async def download_document(db_id: str, doc_id: str, request: Request, current_u
 
         # 根据path类型选择下载方式
         from src.knowledge.utils.kb_utils import is_minio_url
+
         if is_minio_url(file_path):
             # MinIO下载
             logger.debug(f"Downloading from MinIO: {file_path}")
@@ -557,6 +564,7 @@ async def download_document(db_id: str, doc_id: str, request: Request, current_u
             try:
                 # 使用通用函数解析MinIO URL
                 from src.knowledge.utils.kb_utils import parse_minio_url
+
                 bucket_name, object_name = parse_minio_url(file_path)
 
                 logger.debug(f"Parsed bucket_name: {bucket_name}, object_name: {object_name}")
@@ -683,6 +691,44 @@ async def query_test(
         return {"message": f"测试查询失败: {e}", "status": "failed"}
 
 
+@knowledge.put("/databases/{db_id}/query-params")
+async def update_knowledge_base_query_params(
+    db_id: str, params: dict = Body(...), current_user: User = Depends(get_admin_user)
+):
+    """更新知识库查询参数配置"""
+    try:
+        # 获取知识库实例
+        kb_instance = knowledge_base.get_kb(db_id)
+        if not kb_instance:
+            raise HTTPException(status_code=404, detail="Knowledge base not found")
+
+        # 更新知识库元数据中的查询参数
+        async with knowledge_base._metadata_lock:
+            # 确保知识库元数据存在
+            if db_id not in knowledge_base.global_databases_meta:
+                knowledge_base.global_databases_meta[db_id] = {}
+
+            # 初始化 query_params 结构
+            if "query_params" not in knowledge_base.global_databases_meta[db_id]:
+                knowledge_base.global_databases_meta[db_id]["query_params"] = {}
+
+            # 将参数保存到 options 下，与评估服务期望的结构一致
+            if "options" not in knowledge_base.global_databases_meta[db_id]["query_params"]:
+                knowledge_base.global_databases_meta[db_id]["query_params"]["options"] = {}
+
+            # 更新 options
+            knowledge_base.global_databases_meta[db_id]["query_params"]["options"].update(params)
+            knowledge_base._save_global_metadata()
+
+            logger.info(f"更新知识库 {db_id} 查询参数: {params}")
+
+        return {"message": "success", "data": params}
+
+    except Exception as e:
+        logger.error(f"更新知识库查询参数失败: {e}")
+        raise HTTPException(status_code=500, detail=f"更新查询参数失败: {str(e)}")
+
+
 @knowledge.get("/databases/{db_id}/query-params")
 async def get_knowledge_base_query_params(db_id: str, current_user: User = Depends(get_admin_user)):
     """获取知识库类型特定的查询参数"""
@@ -740,68 +786,6 @@ async def get_knowledge_base_query_params(db_id: str, current_user: User = Depen
                     },
                 ],
             }
-        elif kb_type == "chroma":
-            top_k_default = reranker_config.get("final_top_k", 10)
-            params_list = [
-                {
-                    "key": "top_k",
-                    "label": "TopK",
-                    "type": "number",
-                    "default": top_k_default,
-                    "min": 1,
-                    "max": 100,
-                    "description": "返回的最大结果数量",
-                },
-                {
-                    "key": "similarity_threshold",
-                    "label": "相似度阈值",
-                    "type": "number",
-                    "default": 0.0,
-                    "min": 0.0,
-                    "max": 1.0,
-                    "step": 0.1,
-                    "description": "过滤相似度低于此值的结果",
-                },
-                {
-                    "key": "include_distances",
-                    "label": "显示相似度",
-                    "type": "boolean",
-                    "default": True,
-                    "description": "在结果中显示相似度分数",
-                },
-                {
-                    "key": "use_reranker",
-                    "label": "启用重排序",
-                    "type": "boolean",
-                    "default": reranker_enabled,
-                    "description": "是否使用精排模型对检索结果进行重排序",
-                },
-                {
-                    "key": "recall_top_k",
-                    "label": "召回数量",
-                    "type": "number",
-                    "default": reranker_config.get("recall_top_k", 50),
-                    "min": 10,
-                    "max": 200,
-                    "description": "启用重排序时向量检索的候选数量",
-                },
-            ]
-
-            if config.reranker_names:
-                params_list.append(
-                    {
-                        "key": "reranker_model",
-                        "label": "重排序模型",
-                        "type": "select",
-                        "default": reranker_config.get("model", ""),
-                        "options": [
-                            {"label": info.name, "value": model_id} for model_id, info in config.reranker_names.items()
-                        ],
-                        "description": "覆盖默认配置，选择用于本次查询的重排序模型",
-                    }
-                )
-
-            params = {"type": "chroma", "options": params_list}
         elif kb_type == "milvus":
             top_k_default = reranker_config.get("final_top_k", 10)
             params_list = [
@@ -892,6 +876,22 @@ async def get_knowledge_base_query_params(db_id: str, current_user: User = Depen
                     }
                 ],
             }
+
+        # 获取用户保存的配置
+        saved_options = {}
+        try:
+            if db_id in knowledge_base.global_databases_meta:
+                query_params_meta = knowledge_base.global_databases_meta[db_id].get("query_params", {})
+                saved_options = query_params_meta.get("options", {})
+        except Exception as saved_error:
+            logger.warning(f"获取保存的配置失败: {saved_error}")
+
+        # 将保存的值合并到默认配置中
+        if saved_options:
+            for option in params.get("options", []):
+                key = option.get("key")
+                if key in saved_options:
+                    option["default"] = saved_options[key]
 
         return {"params": params, "message": "success"}
 
@@ -1076,9 +1076,6 @@ async def get_sample_questions(db_id: str, current_user: User = Depends(get_admi
         db_meta = knowledge_base.global_databases_meta[db_id]
         questions = db_meta.get("sample_questions", [])
 
-        if not questions:
-            raise HTTPException(status_code=404, detail="该知识库还没有生成测试问题")
-
         return {
             "message": "success",
             "questions": questions,
@@ -1096,6 +1093,39 @@ async def get_sample_questions(db_id: str, current_user: User = Depends(get_admi
 # =============================================================================
 # === 文件管理分组 ===
 # =============================================================================
+
+
+@knowledge.post("/databases/{db_id}/folders")
+async def create_folder(
+    db_id: str,
+    folder_name: str = Body(..., embed=True),
+    parent_id: str | None = Body(None, embed=True),
+    current_user: User = Depends(get_admin_user),
+):
+    """创建文件夹"""
+    try:
+        return await knowledge_base.create_folder(db_id, folder_name, parent_id)
+    except Exception as e:
+        logger.error(f"创建文件夹失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@knowledge.put("/databases/{db_id}/documents/{doc_id}/move")
+async def move_document(
+    db_id: str,
+    doc_id: str,
+    new_parent_id: str | None = Body(..., embed=True),
+    current_user: User = Depends(get_admin_user),
+):
+    """移动文件或文件夹"""
+    logger.debug(f"Move document {doc_id} to {new_parent_id} in {db_id}")
+    try:
+        return await knowledge_base.move_file(db_id, doc_id, new_parent_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"移动文件失败 {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @knowledge.post("/files/upload")
@@ -1136,6 +1166,7 @@ async def upload_file(
 
     # 直接上传到MinIO，添加时间戳区分版本
     import time
+
     timestamp = int(time.time() * 1000)
     minio_filename = f"{basename}_{timestamp}{ext}"
 
@@ -1146,7 +1177,7 @@ async def upload_file(
         bucket_name = "default-uploads"
 
     # 上传到MinIO
-    minio_url = await aupload_file_to_minio(bucket_name, minio_filename, file_bytes, ext.lstrip('.'))
+    minio_url = await aupload_file_to_minio(bucket_name, minio_filename, file_bytes, ext.lstrip("."))
 
     # 检测同名文件（基于原始文件名）
     same_name_files = await knowledge_base.get_same_name_files(db_id, filename)
@@ -1154,16 +1185,16 @@ async def upload_file(
 
     return {
         "message": "File successfully uploaded",
-        "file_path": minio_url,              # MinIO路径作为主要路径
-        "minio_path": minio_url,             # MinIO路径
+        "file_path": minio_url,  # MinIO路径作为主要路径
+        "minio_path": minio_url,  # MinIO路径
         "db_id": db_id,
         "content_hash": content_hash,
-        "filename": filename,                # 原始文件名（小写）
-        "original_filename": basename,       # 原始文件名（去掉后缀）
-        "minio_filename": minio_filename,    # MinIO中的文件名（带时间戳）
-        "bucket_name": bucket_name,          # MinIO存储桶名称
-        "same_name_files": same_name_files,   # 同名文件列表
-        "has_same_name": has_same_name       # 是否包含同名文件标志
+        "filename": filename,  # 原始文件名（小写）
+        "original_filename": basename,  # 原始文件名（去掉后缀）
+        "minio_filename": minio_filename,  # MinIO中的文件名（带时间戳）
+        "bucket_name": bucket_name,  # MinIO存储桶名称
+        "same_name_files": same_name_files,  # 同名文件列表
+        "has_same_name": has_same_name,  # 是否包含同名文件标志
     }
 
 
@@ -1242,3 +1273,62 @@ async def get_all_embedding_models_status(current_user: User = Depends(get_admin
     except Exception as e:
         logger.error(f"获取所有embedding模型状态失败: {e}, {traceback.format_exc()}")
         return {"message": f"获取所有embedding模型状态失败: {e}", "status": {"models": {}, "total": 0, "available": 0}}
+
+
+# =============================================================================
+# === AI 辅助功能分组 ===
+# =============================================================================
+
+
+@knowledge.post("/generate-description")
+async def generate_description(
+    name: str = Body(..., description="知识库名称"),
+    current_description: str = Body("", description="当前描述（可选，用于优化）"),
+    file_list: list[str] = Body([], description="文件列表"),
+    current_user: User = Depends(get_admin_user),
+):
+    """使用 LLM 生成或优化知识库描述
+
+    根据知识库名称和现有描述，使用 LLM 生成适合作为智能体工具描述的内容。
+    """
+    from src.models import select_model
+
+    logger.debug(f"Generating description for knowledge base: {name}, files: {len(file_list)}")
+
+    # 构建文件列表文本
+    if file_list:
+        # 限制文件数量，避免 prompt 过长
+        display_files = file_list[:50]
+        files_str = "\n".join([f"- {f}" for f in display_files])
+        more_text = f"\n... (还有 {len(file_list) - 50} 个文件)" if len(file_list) > 50 else ""
+        current_description += f"\n\n知识库包含的文件:\n{files_str}{more_text}"
+
+    current_description = current_description or "暂无描述"
+
+    # 构建提示词
+    prompt = textwrap.dedent(f"""
+        请帮我优化以下知识库的描述。
+
+        知识库名称: {name}
+        当前描述: {current_description}
+
+        要求:
+        1. 这个描述将作为智能体工具的描述使用
+        2. 智能体会根据知识库的标题和描述来选择合适的工具
+        3. 所以描述需要清晰、具体，说明该知识库包含什么内容、适合解答什么类型的问题
+        4. 描述应该简洁有力，通常 2-4 句话即可
+        5. 不要使用 Markdown 格式
+        {"6. 请参考提供的文件列表来准确概括知识库内容" if file_list else ""}
+
+        请直接输出优化后的描述，不要有任何前缀说明。
+    """).strip()
+
+    try:
+        model = select_model()
+        response = await asyncio.to_thread(model.call, prompt)
+        description = response.content.strip()
+        logger.debug(f"Generated description: {description}")
+        return {"description": description, "status": "success"}
+    except Exception as e:
+        logger.error(f"生成描述失败: {e}, {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"生成描述失败: {e}")

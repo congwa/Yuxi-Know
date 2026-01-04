@@ -1,6 +1,9 @@
 <template>
-  <div>
+  <div class="model-providers-section">
     <!-- 自定义供应商管理区域 -->
+    <h3>模型配置</h3>
+    <p>请在 <code>.env</code> 文件中配置对应的 APIKEY，并重新启动服务</p>
+    <a-divider />
     <div class="custom-providers-section">
       <div class="section-header">
         <h3>自定义供应商</h3>
@@ -108,22 +111,11 @@
           <div class="provider-actions">
             <a-button
               type="text"
-              size="small"
               class="expand-button"
               @click.stop="openProviderConfig(item)"
               title="配置模型"
             >
               <SettingOutlined />
-            </a-button>
-            <a-button
-              type="text"
-              size="small"
-              class="expand-button"
-              @click.stop="toggleExpand(item)"
-            >
-              <span class="icon-wrapper" :class="{'rotated': expandedModels[item]}">
-                <DownCircleOutlined />
-              </span>
             </a-button>
           </div>
         </div>
@@ -174,12 +166,31 @@
       </div>
       <div v-else class="modal-config-content">
         <div class="modal-config-header">
-          <h3>选择 {{ providerConfig.providerName }} 的模型</h3>
           <p class="description">勾选您希望在系统中启用的模型，请注意，列表中可能包含非对话模型，请仔细甄别。</p>
         </div>
 
         <div class="modal-models-section">
-          <div class="model-search">
+          <!-- 警告：检测到失效模型 -->
+          <div v-if="unsupportedModels.length > 0" class="simple-notice warning" style="margin-bottom: 20px;">
+            <p>检测到配置中包含当前供应商列表中不存在的模型。以下模型可能已失效或被供应商移除：</p>
+            <div class="unsupported-list">
+              <a-tag
+                closable
+                v-for="model in unsupportedModels"
+                :key="model"
+                color="error"
+                @close="removeModel(model)"
+                style="margin-bottom: 4px;"
+              >
+                {{ model }}
+              </a-tag>
+            </div>
+            <a-button size="small" type="primary" danger ghost @click="removeAllUnsupported" class="clear-btn">
+              一键移除所有失效模型
+            </a-button>
+          </div>
+
+          <div class="model-search" v-if="providerConfig.allModels.length > 0">
             <a-input
               v-model:value="providerConfig.searchQuery"
               placeholder="搜索模型..."
@@ -192,14 +203,14 @@
           </div>
 
           <!-- 显示选中统计信息 -->
-          <div class="selection-summary">
+          <div class="selection-summary" v-if="providerConfig.allModels.length > 0">
             <span>已选择 {{ providerConfig.selectedModels.length }} 个模型</span>
             <span v-if="providerConfig.searchQuery" class="filter-info">
               （当前筛选显示 {{ filteredModels.length }} 个）
             </span>
           </div>
 
-          <div class="modal-checkbox-list">
+          <div class="modal-checkbox-list" v-if="providerConfig.allModels.length > 0">
             <div v-for="(model, index) in filteredModels" :key="index" class="modal-checkbox-item">
               <a-checkbox
                 :checked="providerConfig.selectedModels.includes(model.id)"
@@ -209,14 +220,45 @@
               </a-checkbox>
             </div>
           </div>
-          <div v-if="providerConfig.allModels.length === 0" class="modal-no-models">
-            <a-alert v-if="!modelStatus[providerConfig.provider]" type="warning" message="请在 .env 中配置对应的 APIKEY，并重新启动服务" />
-            <div v-else>
-              <a-alert type="warning" message="该提供商暂未适配获取模型列表的方法，如需添加模型，请编辑 src/config/static/models.py 。">
-                <template #description>
-                  <a href="https://xerrors.github.io/Yuxi-Know/latest/intro/model-config.html" target="_blank">模型配置</a>
-                </template>
-              </a-alert>
+
+          <!-- 手动管理模式 (当无法获取模型列表时) -->
+          <div v-if="providerConfig.allModels.length === 0" class="modal-manual-manage">
+            <div v-if="!modelStatus[providerConfig.provider]" class="simple-notice warning" style="margin-bottom: 16px;">
+              请在 .env 中配置对应的 APIKEY，并重新启动服务
+            </div>
+
+            <div class="manual-manage-container">
+              <div class="manual-header">
+                <div class="simple-notice info">
+                  无法获取模型列表，您可以手动管理模型配置。该提供商暂未适配自动获取模型列表，或者网络请求失败。您可以在下方手动添加或移除模型。
+                </div>
+              </div>
+
+              <div class="manual-add-box" style="margin: 16px 0;">
+                <a-input-search
+                  v-model:value="manualModelInput"
+                  placeholder="请输入模型ID（如：gpt-4）"
+                  enter-button="添加模型"
+                  @search="addManualModel"
+                />
+              </div>
+
+              <div class="current-models-list">
+                <h4 style="margin-bottom: 10px; font-weight: 600;">当前配置的模型 ({{ providerConfig.selectedModels.length }})</h4>
+                <div v-if="providerConfig.selectedModels.length === 0" class="empty-text" style="color: var(--gray-500); padding: 8px 0;">暂无配置模型</div>
+                <div class="tags-container">
+                  <a-tag
+                    v-for="model in providerConfig.selectedModels"
+                    :key="model"
+                    closable
+                    color="blue"
+                    @close="removeModel(model)"
+                    style="margin-bottom: 8px; padding: 4px 8px;"
+                  >
+                    {{ model }}
+                  </a-tag>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -306,7 +348,7 @@
 import { computed, reactive, watch, h, ref } from 'vue'
 import { message } from 'ant-design-vue';
 import {
-  InfoCircleOutlined,
+  InfoCircleOutlined, // Keep if still used for other things, if not, remove. For now assume it might be used elsewhere.
   SettingOutlined,
   DownCircleOutlined,
   LoadingOutlined,
@@ -478,6 +520,46 @@ const filteredModels = computed(() => {
   const searchQuery = providerConfig.searchQuery.toLowerCase();
   return allModels.filter(model => model.id.toLowerCase().includes(searchQuery));
 });
+
+// 计算不支持/已失效的模型
+const unsupportedModels = computed(() => {
+  if (providerConfig.allModels.length === 0) return [];
+  const availableIds = new Set(providerConfig.allModels.map(m => m.id));
+  return providerConfig.selectedModels.filter(id => !availableIds.has(id));
+});
+
+// 手动管理相关
+const manualModelInput = ref('');
+
+// 添加手动输入的模型
+const addManualModel = () => {
+  const val = manualModelInput.value.trim();
+  if (!val) return;
+
+  if (providerConfig.selectedModels.includes(val)) {
+    message.warning('该模型已存在');
+    return;
+  }
+
+  providerConfig.selectedModels.push(val);
+  manualModelInput.value = '';
+  message.success('添加成功');
+};
+
+// 移除模型
+const removeModel = (modelId) => {
+  const idx = providerConfig.selectedModels.indexOf(modelId);
+  if (idx > -1) {
+    providerConfig.selectedModels.splice(idx, 1);
+  }
+};
+
+// 移除所有不支持的模型
+const removeAllUnsupported = () => {
+  const toRemove = unsupportedModels.value;
+  providerConfig.selectedModels = providerConfig.selectedModels.filter(id => !toRemove.includes(id));
+  message.success(`已移除 ${toRemove.length} 个失效模型`);
+};
 
 // 自定义供应商管理
 const customProviderForm = ref();
@@ -690,23 +772,12 @@ const testCustomProvider = async (providerId, modelName) => {
 </script>
 
 <style lang="less" scoped>
-// 自定义供应商区域样式
+.model-providers-section {
+  padding-top: 12px;
+}
+
 .custom-providers-section {
   margin-bottom: 24px;
-
-  .section-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
-
-    h3 {
-      margin: 0;
-      font-size: 18px;
-      font-weight: 600;
-      color: var(--gray-900);
-    }
-  }
 
   .section-description {
     margin: 0 0 16px 0;
@@ -723,11 +794,6 @@ const testCustomProvider = async (providerId, modelName) => {
     overflow: hidden;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
 
-    &:hover {
-      border-color: var(--gray-300);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-    }
-
     .card-header {
       display: flex;
       justify-content: space-between;
@@ -743,7 +809,6 @@ const testCustomProvider = async (providerId, modelName) => {
 
         h4 {
           margin: 0;
-          font-size: 16px;
           font-weight: 600;
           color: var(--gray-900);
         }
@@ -760,13 +825,7 @@ const testCustomProvider = async (providerId, modelName) => {
 
       .provider-actions {
         display: flex;
-        gap: 8px;
-
-        .ant-btn {
-          display: flex;
-          align-items: center;
-          gap: 4px;
-        }
+        gap: 0px;
       }
     }
 
@@ -808,19 +867,22 @@ const testCustomProvider = async (providerId, modelName) => {
   }
 }
 
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+
+  h3 {
+    margin: 0;
+    font-weight: 600;
+    color: var(--gray-900);
+  }
+}
+
 .builtin-providers-section {
   .section-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 16px;
-
-    h3 {
-      margin: 0;
-      font-size: 18px;
-      font-weight: 600;
-      color: var(--gray-900);
-    }
 
     .providers-stats {
       display: flex;
@@ -833,13 +895,13 @@ const testCustomProvider = async (providerId, modelName) => {
         font-size: 12px;
 
         &.available {
-          background: rgba(34, 197, 94, 0.1);
-          color: #16a34a;
+          background: var(--color-success-50);
+          color: var(--color-success-700);
         }
 
         &.unavailable {
-          background: rgba(249, 115, 22, 0.1);
-          color: #ea580c;
+          background: var(--color-warning-50);
+          color: var(--color-warning-700);
         }
       }
     }
@@ -860,30 +922,12 @@ const testCustomProvider = async (providerId, modelName) => {
   border-radius: 8px;
   margin-bottom: 16px;
   padding: 0;
-  transition: all 0.3s ease;
   overflow: hidden;
-
-  &:hover {
-    border-color: var(--gray-200);
-  }
-
-  // 自定义模型容器特殊样式
-  &.custom-models-card {
-    .card-header {
-
-      h3 {
-        color: var(--main-color);
-        font-weight: 600;
-      }
-    }
-  }
 
   // 已配置provider的样式
   &.configured-provider {
     .model-icon {
-      &.available {
-        filter: grayscale(0%);
-      }
+      filter: grayscale(0%);
     }
 
     .provider-meta {
@@ -908,24 +952,6 @@ const testCustomProvider = async (providerId, modelName) => {
         filter: grayscale(100%);
       }
     }
-
-    .missing-keys {
-      color: var(--gray-700);
-      font-size: 12px;
-      font-weight: 500;
-
-      & > span {
-        margin-left: 6px;
-        user-select: all;
-        background-color: rgba(251, 146, 60, 0.15);
-        color: #d97706;
-        padding: 3px 8px;
-        border-radius: 6px;
-        font-weight: 600;
-        font-size: 11px;
-        border: 1px solid rgba(251, 146, 60, 0.2);
-      }
-    }
   }
 
   .card-header {
@@ -935,21 +961,15 @@ const testCustomProvider = async (providerId, modelName) => {
     cursor: pointer;
     padding: 8px 16px;
     background: var(--gray-0);
-    transition: all 0.3s ease;
-
-    &:hover {
-      background: var(--gray-50);
-    }
 
     .model-title-container {
       display: flex;
       flex-direction: column;
-      gap: 4px;
       flex: 1;
 
       h3 {
         margin: 0;
-        font-size: 15px;
+        font-size: 14px;
         font-weight: 600;
         color: var(--gray-900);
       }
@@ -966,22 +986,13 @@ const testCustomProvider = async (providerId, modelName) => {
         }
 
         .provider-id {
-          background: var(--gray-100);
-          color: var(--gray-600);
+          background: var(--gray-50);
+          color: var(--gray-900);
           padding: 2px 6px;
           border-radius: 4px;
           font-size: 11px;
           font-weight: 500;
           font-family: 'Courier New', monospace;
-        }
-
-        .provider-link {
-          color: var(--gray-500);
-          transition: color 0.2s ease;
-
-          &:hover {
-            color: var(--main-color);
-          }
         }
       }
     }
@@ -998,19 +1009,20 @@ const testCustomProvider = async (providerId, modelName) => {
     }
 
     .model-icon {
-      width: 28px;
-      height: 28px;
+      width: 36px;
+      height: 36px;
       border-radius: 6px;
       overflow: hidden;
       filter: grayscale(100%);
-      transition: filter 0.2s ease;
       flex-shrink: 0;
+      background-color: white;
+      border: 1px solid var(--gray-200);
 
       img {
         width: 100%;
         height: 100%;
-        object-fit: cover;
-        border: 1px solid var(--gray-100);
+        object-fit: contain;
+        padding: 4px;
         border-radius: 6px;
       }
 
@@ -1035,15 +1047,6 @@ const testCustomProvider = async (providerId, modelName) => {
         background-color: var(--gray-50);
         color: var(--gray-700);
       }
-
-      .icon-wrapper {
-        display: inline-flex;
-        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-
-        &.rotated {
-          transform: rotate(180deg);
-        }
-      }
     }
 
     a {
@@ -1057,11 +1060,8 @@ const testCustomProvider = async (providerId, modelName) => {
       }
     }
 
-    .details, .missing-keys {
-      margin-left: auto;
-    }
-
     .missing-keys {
+      margin-left: auto;
       color: var(--gray-700);
       font-size: 12px;
       font-weight: 500;
@@ -1069,40 +1069,13 @@ const testCustomProvider = async (providerId, modelName) => {
       & > span {
         margin-left: 6px;
         user-select: all;
-        background-color: rgba(251, 146, 60, 0.15);
-        color: #d97706;
+        background-color: var(--color-warning-50);
+        color: var(--color-warning-700);
         padding: 3px 8px;
         border-radius: 6px;
         font-weight: 600;
         font-size: 11px;
-        border: 1px solid rgba(251, 146, 60, 0.2);
-      }
-    }
-
-    .expand-button, .config-button {
-      height: 32px;
-      width: 32px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 0;
-      cursor: pointer;
-      color: var(--gray-500);
-      border-radius: 6px;
-      transition: all 0.2s ease;
-
-      &:hover {
-        background-color: var(--gray-50);
-        color: var(--gray-700);
-      }
-
-      .icon-wrapper {
-        display: inline-flex;
-        transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-
-        &.rotated {
-          transform: rotate(180deg);
-        }
+        border: 1px solid var(--color-warning-100);
       }
     }
   }
@@ -1110,7 +1083,6 @@ const testCustomProvider = async (providerId, modelName) => {
   .card-body-wrapper {
     max-height: 0;
     overflow: hidden;
-    transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     background: var(--gray-0);
 
     &.expanded {
@@ -1123,7 +1095,6 @@ const testCustomProvider = async (providerId, modelName) => {
     grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
     gap: 12px;
     padding: 16px;
-    background: var(--gray-10);
 
     // 普通模型卡片样式
     .card-models {
@@ -1136,13 +1107,7 @@ const testCustomProvider = async (providerId, modelName) => {
       align-items: center;
       box-sizing: border-box;
       background: var(--gray-0);
-      transition: all 0.3s ease;
       min-height: 48px;
-
-      &:hover {
-        box-shadow: 0 1px 8px rgba(0, 0, 0, 0.03);
-        border-color: var(--gray-200);
-      }
 
       .model_name {
         font-size: 14px;
@@ -1153,148 +1118,6 @@ const testCustomProvider = async (providerId, modelName) => {
         white-space: nowrap;
         line-height: 1.4;
       }
-
-      .select-btn {
-        width: 16px;
-        height: 16px;
-        flex: 0 0 16px;
-        border-radius: 50%;
-        border: 2px solid var(--gray-300);
-        background: var(--gray-0);
-        transition: all 0.2s ease;
-
-        &:hover {
-          border-color: var(--main-color);
-        }
-      }
-    }
-
-    // 自定义模型卡片样式 - 统一设计
-    .custom-model {
-      display: flex;
-      flex-direction: column;
-      align-items: stretch;
-      padding: 12px 16px;
-      gap: 8px;
-      cursor: pointer;
-      min-height: 72px;
-      background: var(--gray-0);
-      border-radius: 6px;
-      border: 1px solid var(--gray-150);
-      transition: all 0.3s ease;
-
-      &:hover {
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
-        border-color: var(--gray-200);
-
-        .card-models__header .action {
-          opacity: 1;
-        }
-      }
-
-        .card-models__header {
-        width: 100%;
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        min-height: 18px;
-
-        .name {
-          font-size: 14px;
-          font-weight: 500;
-          color: var(--gray-900);
-          line-height: 1.4;
-          flex: 1;
-          margin-right: 8px;
-          word-break: break-word;
-        }
-
-        .action {
-          opacity: 0;
-          transition: opacity 0.2s ease;
-          display: flex;
-          gap: 4px;
-          flex-shrink: 0;
-          margin-top: -1px;
-
-          button {
-            padding: 4px;
-            height: 24px;
-            width: 24px;
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.2s ease;
-
-            &:hover {
-              background-color: var(--gray-100);
-            }
-
-            &:disabled {
-              opacity: 0.4;
-              cursor: not-allowed;
-
-              &:hover {
-                background-color: transparent;
-              }
-            }
-          }
-        }
-      }
-
-      .api_base {
-        font-size: 12px;
-        color: var(--gray-600);
-        line-height: 1.3;
-        word-break: break-all;
-        margin-top: auto;
-      }
-
-      // 添加模型的special样式
-      &.add-model {
-        border: 2px dashed var(--gray-300);
-        background: var(--gray-0);
-        justify-content: center;
-        align-items: center;
-        text-align: center;
-        min-height: 64px;
-
-        &:hover {
-          border-color: var(--main-color);
-          background: var(--gray-25);
-        }
-
-        .card-models__header {
-          justify-content: center;
-          align-items: center;
-          text-align: center;
-
-          .name {
-            color: var(--main-color);
-            font-weight: 600;
-            margin-right: 0;
-            text-align: center;
-          }
-        }
-
-        .api_base {
-          color: var(--gray-500);
-          text-align: center;
-          margin-top: 4px;
-        }
-      }
-    }
-  }
-}
-
-.custom-model-modal {
-  .ant-form-item {
-    margin-bottom: 10px;
-    .form-item-description {
-      font-size: 12px;
-      color: var(--gray-600);
-      margin-bottom: 10px;
     }
   }
 }
@@ -1337,12 +1160,6 @@ const testCustomProvider = async (providerId, modelName) => {
 
           .ant-input-affix-wrapper {
             border-radius: 6px;
-            &:hover, &:focus {
-              border-color: var(--main-color);
-            }
-            .anticon {
-              color: var(--gray-500);
-            }
           }
         }
         .selection-summary {
@@ -1364,10 +1181,6 @@ const testCustomProvider = async (providerId, modelName) => {
             border-radius: 6px;
             background-color: var(--gray-0);
             border: 1px solid var(--gray-150);
-
-            &:hover {
-              background-color: var(--gray-50);
-            }
           }
         }
       }
@@ -1385,25 +1198,7 @@ const testCustomProvider = async (providerId, modelName) => {
       .model_name {
         color: var(--gray-500);
       }
-
-      &:hover {
-        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
-        border-color: var(--gray-200);
-      }
     }
-  }
-}
-
-// 添加简单的脉冲动画
-@keyframes pulse {
-  0% {
-    opacity: 0.7;
-  }
-  50% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0.7;
   }
 }
 
@@ -1421,21 +1216,46 @@ const testCustomProvider = async (providerId, modelName) => {
     .card-header {
       padding: 10px;
       gap: 8px;
-
-      .model-icon {
-        width: 24px;
-        height: 24px;
-      }
-
-      h3 {
-        font-size: 14px;
-      }
-
-      .expand-button, .config-button {
-        height: 30px;
-        width: 30px;
-      }
     }
+  }
+}
+
+// Simple Notice Styles
+.simple-notice {
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 12px;
+  border: 1px solid transparent; // Keep a subtle border
+
+  &.warning {
+    background-color: var(--color-warning-50);
+    color: var(--color-warning-700);
+    border-color: var(--color-warning-100);
+  }
+
+  &.info {
+    background-color: var(--color-info-50);
+    color: var(--color-info-700);
+    border-color: var(--color-info-100);
+  }
+
+  p { // For warning message, if it's multiline
+    margin: 0;
+  }
+
+  .unsupported-list {
+    margin-top: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .clear-btn {
+    margin-top: 8px;
+    font-size: 12px;
+    height: 24px;
+    padding: 0 8px;
   }
 }
 </style>

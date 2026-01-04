@@ -1,6 +1,7 @@
 import hashlib
 import os
 import time
+import traceback
 from pathlib import Path
 
 import aiofiles
@@ -73,6 +74,23 @@ def validate_file_path(file_path: str, db_id: str = None) -> str:
         raise ValueError(f"Invalid file path: {file_path}")
 
 
+def _unescape_separator(separator: str | None) -> str | None:
+    """将前端传入的字面量转义字符转换为实际字符
+
+    例如: "\\n\\n\\n" -> "\n\n\n"
+    """
+    if not separator:
+        return None
+
+    # 处理常见的转义序列
+    separator = separator.replace("\\n", "\n")
+    separator = separator.replace("\\r", "\r")
+    separator = separator.replace("\\t", "\t")
+    separator = separator.replace("\\\\", "\\")
+
+    return separator
+
+
 def split_text_into_chunks(text: str, file_id: str, filename: str, params: dict = {}) -> list[dict]:
     """
     将文本分割成块，使用 LangChain 的 MarkdownTextSplitter 进行智能分割
@@ -81,6 +99,16 @@ def split_text_into_chunks(text: str, file_id: str, filename: str, params: dict 
     chunk_size = params.get("chunk_size", 1000)
     chunk_overlap = params.get("chunk_overlap", 200)
 
+    # 获取分隔符并转换为实际字符
+    separator = params.get("qa_separator")
+    separator = _unescape_separator(separator)
+
+    # 向后兼容：如果旧配置设置了 use_qa_split=True 但未指定 separator，使用默认分隔符
+    use_qa_split = params.get("use_qa_split", False)
+    if use_qa_split and not separator:
+        separator = "\n\n\n"
+        logger.debug("启用了向后兼容模式：use_qa_split=True，使用默认分隔符 \\n\\n\\n")
+
     # 使用 MarkdownTextSplitter 进行智能分割
     # MarkdownTextSplitter 会尝试沿着 Markdown 格式的标题进行分割
     text_splitter = MarkdownTextSplitter(
@@ -88,7 +116,18 @@ def split_text_into_chunks(text: str, file_id: str, filename: str, params: dict 
         chunk_overlap=chunk_overlap,
     )
 
-    text_chunks = text_splitter.split_text(text)
+    # 如果设置了分隔符，先分割后以当前的分割逻辑处理
+    if separator:
+        # 转换分隔符为可视格式（换行符显示为 \n）
+        separator_display = separator.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+        logger.debug(f"启用预分割模式，使用分隔符: '{separator_display}'")
+        pre_chunks = text.split(separator)
+        text_chunks = []
+        for pre_chunk in pre_chunks:
+            if pre_chunk.strip():
+                text_chunks.extend(text_splitter.split_text(pre_chunk))
+    else:
+        text_chunks = text_splitter.split_text(text)
 
     # 转换为标准格式
     for chunk_index, chunk_content in enumerate(text_chunks):
@@ -135,7 +174,8 @@ async def calculate_content_hash(data: bytes | bytearray | str | os.PathLike[str
 
         return sha256.hexdigest()
 
-    raise TypeError(f"Unsupported data type for hashing: {type(data)!r}")
+    # 理论上不会执行到这里，但保留作为防御性编程
+    raise TypeError(f"Unsupported data type for hashing: {type(data)!r}")  # type: ignore[unreachable]
 
 
 async def prepare_item_metadata(item: str, content_type: str, db_id: str, params: dict | None = None) -> dict:
@@ -165,7 +205,8 @@ async def prepare_item_metadata(item: str, content_type: str, db_id: str, params
 
             # 如果文件名包含时间戳，提取原始文件名
             import re
-            timestamp_pattern = r'^(.+)_(\d{13})(\.[^.]+)$'
+
+            timestamp_pattern = r"^(.+)_(\d{13})(\.[^.]+)$"
             match = re.match(timestamp_pattern, filename)
             if match:
                 original_filename = match.group(1) + match.group(3)
@@ -211,6 +252,7 @@ async def prepare_item_metadata(item: str, content_type: str, db_id: str, params
         "created_at": utc_isoformat(),
         "file_id": file_id,
         "content_hash": content_hash,
+        "parent_id": params.get("parent_id") if params else None,
     }
 
     # 保存处理参数到元数据
@@ -218,39 +260,6 @@ async def prepare_item_metadata(item: str, content_type: str, db_id: str, params
         metadata["processing_params"] = params.copy()
 
     return metadata
-
-
-def split_text_into_qa_chunks(
-    text: str, file_id: str, filename: str, qa_separator: None | str = None, params: dict = {}
-) -> list[dict]:
-    """
-    将文本按QA对分割成块，使用 LangChain 的 CharacterTextSplitter 进行分割"""
-    qa_separator = qa_separator or "\n\n"
-    text_chunks = text.split(qa_separator)
-
-    # 转换为标准格式
-    chunks = []
-    for chunk_index, chunk_content in enumerate(text_chunks):
-        if chunk_content.strip():  # 跳过空块
-            chunk_content = chunk_content.strip()[:4096]
-            chunks.append(
-                {
-                    "id": f"{file_id}_qa_chunk_{chunk_index}",
-                    "content": chunk_content.strip(),
-                    "file_id": file_id,
-                    "filename": filename,
-                    "chunk_index": chunk_index,
-                    "source": filename,
-                    "chunk_id": f"{file_id}_qa_chunk_{chunk_index}",
-                    "chunk_type": "qa",  # 标识为QA类型的chunk
-                }
-            )
-
-    logger.debug(f"QA chunks: {chunks[0]}")
-    logger.debug(
-        f"Successfully split QA text into {len(chunks)} chunks using CharacterTextSplitter with `{qa_separator=}`"
-    )
-    return chunks
 
 
 def merge_processing_params(metadata_params: dict | None, request_params: dict | None) -> dict:
@@ -288,30 +297,45 @@ def get_embedding_config(embed_info: dict) -> dict:
     Returns:
         dict: 标准化的嵌入配置
     """
-    config_dict = {}
-
     try:
-        if embed_info:
-            # 优先检查是否有 model_id 字段
-            if "model_id" in embed_info:
-                return config.embed_model_names[embed_info["model_id"]].model_dump()
-            elif hasattr(embed_info, "name") and isinstance(embed_info, EmbedModelInfo):
-                return embed_info.model_dump()
-            else:
-                # 字典形式（保持向后兼容）
-                config_dict["model"] = embed_info["name"]
-                config_dict["api_key"] = os.getenv(embed_info["api_key"]) or embed_info["api_key"]
-                config_dict["base_url"] = embed_info["base_url"]
-                config_dict["dimension"] = embed_info.get("dimension", 1024)
-        else:
-            return config.embed_model_names[config.embed_model].model_dump()
+        # 使用最新配置
+        assert isinstance(embed_info, dict), f"embed_info must be a dict, got {type(embed_info)}"
+        assert "model_id" in embed_info, f"embed_info must contain 'model_id', got {embed_info}"
+        logger.warning(f"Using model_id: {embed_info['model_id']}")
+        config_dict = config.embed_model_names[embed_info["model_id"]].model_dump()
+        config_dict["api_key"] = os.getenv(config_dict["api_key"]) or config_dict["api_key"]
+        return config_dict
+
+    except AssertionError as e:
+        logger.error(f"AssertionError in get_embedding_config: {e}, embed_info={embed_info}")
+
+    # 兼容性检查：旧版配置字段
+    try:
+        # 1. 检查 embed_info 是否有效
+        if not embed_info or ("model" not in embed_info and "name" not in embed_info):
+            logger.error(f"Invalid embed_info: {embed_info}, using default embedding model config")
+            raise ValueError("Invalid embed_info: must be a non-empty dictionary")
+
+        # 2. 检查是否是 EmbedModelInfo 对象（在某些情况下可能直接传入对象）
+        if hasattr(embed_info, "name") and isinstance(embed_info, EmbedModelInfo):
+            logger.debug(f"Using EmbedModelInfo object: {embed_info.name}, {traceback.format_exc()}")
+            config_dict = embed_info.model_dump()
+            config_dict["api_key"] = os.getenv(config_dict["api_key"]) or config_dict["api_key"]
+            return config_dict
+
+        raise ValueError(f"Unsupported embed_info format: {embed_info}")
 
     except Exception as e:
-        logger.error(f"Error in get_embedding_config: {e}, {embed_info}")
-        raise ValueError(f"Error in get_embedding_config: {e}")
-
-    logger.debug(f"Embedding config: {config_dict}")
-    return config_dict
+        logger.error(f"Error in get_embedding_config: {e}, embed_info={embed_info}")
+        # 返回默认配置作为fallback
+        logger.warning("Falling back to default embedding model config")
+        try:
+            config_dict = config.embed_model_names[config.embed_model].model_dump()
+            config_dict["api_key"] = os.getenv(config_dict["api_key"]) or config_dict["api_key"]
+            return config_dict
+        except Exception as fallback_error:
+            logger.error(f"Failed to get default embedding config: {fallback_error}")
+            raise ValueError(f"Failed to get embedding config and fallback failed: {e}")
 
 
 def is_minio_url(file_path: str) -> bool:
@@ -347,10 +371,10 @@ def parse_minio_url(file_path: str) -> tuple[str, str]:
         parsed_url = urlparse(file_path)
 
         # 从URL路径中提取对象名称（去掉开头的斜杠）
-        object_name = parsed_url.path.lstrip('/')
+        object_name = parsed_url.path.lstrip("/")
 
         # 分离bucket名称和对象名称
-        path_parts = object_name.split('/', 1)
+        path_parts = object_name.split("/", 1)
         if len(path_parts) > 1:
             bucket_name = path_parts[0]
             object_name = path_parts[1]

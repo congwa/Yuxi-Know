@@ -4,7 +4,7 @@
     :title="null"
     placement="bottomRight"
     trigger="click"
-    :overlayStyle="{ width: '400px', zIndex: 1030 }"
+    :overlayStyle="{ width: '400px', zIndex: 999 }"
   >
     <template #content>
       <div class="popover-content">
@@ -39,17 +39,13 @@
                 :key="index"
                 class="todo-item"
               >
-                <span class="todo-status" :class="todo.status">
-                  <svg v-if="todo.status === 'completed'" viewBox="0 0 24 24" fill="currentColor" class="icon">
-                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
-                  </svg>
-                  <svg v-else-if="todo.status === 'in_progress'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="icon spinning">
-                    <circle cx="12" cy="12" r="10" stroke-dasharray="31.416" stroke-dashoffset="31.416" stroke-linecap="round"/>
-                  </svg>
-                  <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="icon">
-                    <circle cx="12" cy="12" r="10"/>
-                  </svg>
-                </span>
+                <div class="todo-status">
+                  <CheckCircleOutlined v-if="todo.status === 'completed'" class="icon completed" />
+                  <SyncOutlined v-else-if="todo.status === 'in_progress'" class="icon in-progress" spin />
+                  <ClockCircleOutlined v-else-if="todo.status === 'pending'" class="icon pending" />
+                  <CloseCircleOutlined v-else-if="todo.status === 'cancelled'" class="icon cancelled" />
+                  <QuestionCircleOutlined v-else class="icon unknown" />
+                </div>
                 <span class="todo-text">{{ todo.content }}</span>
               </div>
             </div>
@@ -94,15 +90,32 @@
   <!-- 文件内容 Modal -->
   <a-modal
     v-model:open="modalVisible"
-    :title="currentFilePath"
     width="80%"
     :footer="null"
     @cancel="closeModal"
   >
+    <template #title>
+      <div class="modal-header-title">
+        <span class="file-path-title">{{ currentFilePath }}</span>
+        <a-button type="text" size="small" @click="downloadFile(currentFile)" v-if="currentFile">
+          <template #icon><DownloadOutlined /></template>
+          下载
+        </a-button>
+      </div>
+    </template>
     <div class="file-content">
-      <pre v-if="Array.isArray(currentFile?.content)">{{ formatContent(currentFile.content) }}</pre>
-      <div v-else-if="typeof currentFile?.content === 'string'">{{ currentFile.content }}</div>
-      <pre v-else>{{ JSON.stringify(currentFile, null, 2) }}</pre>
+      <template v-if="isMarkdown">
+        <MdPreview
+          :modelValue="formatContent(currentFile?.content)"
+          :theme="theme"
+          previewTheme="github"
+        />
+      </template>
+      <template v-else>
+        <pre v-if="Array.isArray(currentFile?.content)">{{ formatContent(currentFile.content) }}</pre>
+        <div v-else-if="typeof currentFile?.content === 'string'">{{ currentFile.content }}</div>
+        <pre v-else>{{ JSON.stringify(currentFile, null, 2) }}</pre>
+      </template>
     </div>
   </a-modal>
 </template>
@@ -110,6 +123,17 @@
 <script setup>
 import { computed, ref, watch } from 'vue';
 import { Download } from 'lucide-vue-next';
+import { 
+  CheckCircleOutlined, 
+  SyncOutlined, 
+  ClockCircleOutlined, 
+  CloseCircleOutlined,
+  QuestionCircleOutlined,
+  DownloadOutlined
+} from '@ant-design/icons-vue'
+import { MdPreview } from 'md-editor-v3'
+import 'md-editor-v3/lib/preview.css';
+import { useThemeStore } from '@/stores/theme'
 
 const props = defineProps({
   visible: {
@@ -128,6 +152,13 @@ const activeTab = ref('todos');
 const modalVisible = ref(false);
 const currentFile = ref(null);
 const currentFilePath = ref('');
+
+const themeStore = useThemeStore();
+const theme = computed(() => themeStore.isDark ? 'dark' : 'light');
+
+const isMarkdown = computed(() => {
+  return currentFilePath.value?.toLowerCase().endsWith('.md');
+});
 
 // 计算属性
 const visible = computed({
@@ -202,6 +233,7 @@ const formatDate = (dateString) => {
   try {
     const date = new Date(dateString);
     return date.toLocaleString('zh-CN', {
+      year: 'numeric',
       month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
@@ -366,59 +398,19 @@ const emitRefresh = () => {
 
 .todo-status {
   flex-shrink: 0;
-  width: 20px;
-  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
   margin-top: 2px;
-  border-radius: 50%;
-  transition: all 0.15s ease;
-
+  
   .icon {
-    width: 14px;
-    height: 14px;
-    transition: all 0.15s ease;
-  }
-
-  .spinning {
-    animation: spin 1.5s linear infinite;
-    stroke-dasharray: 31.416;
-    stroke-dashoffset: 0;
-    animation: spin 1.5s linear infinite;
-  }
-
-  &.completed {
-    background: var(--color-success-50);
-    color: var(--color-success-700);
-
-    .icon {
-      transform: scale(1.1);
-    }
-  }
-
-  &.in_progress {
-    background: var(--color-warning-50);
-    color: var(--color-warning-700);
-  }
-
-  &.pending {
-    background: var(--gray-100);
-    color: var(--gray-500);
-  }
-}
-
-@keyframes spin {
-  0% {
-    transform: rotate(0deg);
-    stroke-dashoffset: 0;
-  }
-  50% {
-    stroke-dashoffset: 15.708;
-  }
-  100% {
-    transform: rotate(360deg);
-    stroke-dashoffset: 0;
+    font-size: 16px;
+    
+    &.completed { color: #52c41a; }
+    &.in-progress { color: #1890ff; }
+    &.pending { color: #faad14; }
+    &.cancelled { color: #ff4d4f; }
+    &.unknown { color: var(--gray-400); }
   }
 }
 
@@ -438,11 +430,11 @@ const emitRefresh = () => {
 .file-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .file-item {
-  padding: 12px 14px;
+  padding: 8px 12px;
   background: var(--gray-0);
   border: 1px solid var(--gray-150);
   border-radius: 6px;
@@ -468,14 +460,13 @@ const emitRefresh = () => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
 }
 
 .file-name {
   font-size: 14px;
   color: var(--gray-1000);
-  font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
   font-weight: 500;
   flex: 1;
   overflow: hidden;
@@ -539,18 +530,42 @@ const emitRefresh = () => {
     }
   }
 
-  pre {
-    font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-    font-size: 13px;
-    line-height: 1.5;
-    margin: 0;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    color: var(--gray-1000);
-    background: transparent;
-  }
+      pre {
+        font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        margin: 0;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        color: var(--gray-1000);
+        background: transparent;
+      }
+  
+      :deep(.md-editor-preview-wrapper) {
+        padding: 0;
+      }
+  
+      :deep(.md-editor-preview) {
+        font-size: 14px;
+      }
+    }
+
+.modal-header-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding-right: 32px;
 }
 
+.file-path-title {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-weight: 600;
+  color: var(--gray-1000);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* Modal 样式优化 - shadcn 风格 */
 :deep(.ant-modal) {

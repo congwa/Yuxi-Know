@@ -164,14 +164,14 @@ async def get_conversation_detail(
     """Get conversation detail (Admin only)"""
     try:
         conv_manager = ConversationManager(db)
-        conversation = conv_manager.get_conversation_by_thread_id(thread_id)
+        conversation = await conv_manager.get_conversation_by_thread_id(thread_id)
 
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
 
         # Get messages and stats
-        messages = conv_manager.get_messages(conversation.id)
-        stats = conv_manager.get_stats(conversation.id)
+        messages = await conv_manager.get_messages(conversation.id)
+        stats = await conv_manager.get_stats(conversation.id)
 
         # Format messages
         message_list = []
@@ -452,7 +452,6 @@ async def get_knowledge_stats(
                 kb_type = kb_info.get("kb_type", "unknown")
                 display_type = {
                     "lightrag": "LightRAG",
-                    "chroma": "Chroma",
                     "faiss": "FAISS",
                     "milvus": "Milvus",
                     "qdrant": "Qdrant",
@@ -718,7 +717,7 @@ async def get_all_feedbacks(
                 "rating": feedback.rating,
                 "reason": feedback.reason,
                 "created_at": feedback.created_at.isoformat(),
-                "message_content": message.content[:100] + ("..." if len(message.content) > 100 else ""),
+                "message_content": message.content,
                 "conversation_title": conversation.title,
                 "agent_id": conversation.agent_id,
             }

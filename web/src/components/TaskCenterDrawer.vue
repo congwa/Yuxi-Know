@@ -59,7 +59,7 @@
             <a-progress
               :percent="Math.round(task.progress || 0)"
               :status="progressStatus(task.status)"
-              stroke-width=6
+              :stroke-width="6"
               />
             <!-- <span class="task-card-progress-value">{{ Math.round(task.progress || 0) }}%</span> -->
           </div>
@@ -481,12 +481,12 @@ function canCancel(task) {
 .task-card-error {
   font-size: 13px;
   line-height: 1.45;
-  border-radius: 10px;
+  border-radius: 6px;
   padding: 10px 12px;
 }
 
 .task-card-message {
-  background: var(--gray-50);
+  background: var(--gray-100);
   color: var(--gray-800);
 }
 

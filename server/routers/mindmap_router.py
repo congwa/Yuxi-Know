@@ -7,6 +7,7 @@
 - 保存和加载思维导图配置
 """
 
+import asyncio
 import json
 import traceback
 import textwrap
@@ -213,10 +214,10 @@ async def generate_mindmap(
         # 调用AI生成
         logger.info(f"开始生成思维导图，知识库: {db_name}, 文件数量: {len(files_info)}")
 
-        # 选择模型并调用
+        # 选择模型并调用（使用异步包装）
         model = select_model()
         messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_message}]
-        response = model.call(messages, stream=False)
+        response = await asyncio.to_thread(model.call, messages, stream=False)
 
         # 解析AI返回的JSON
         try:
@@ -347,9 +348,6 @@ async def get_database_mindmap(db_id: str, current_user: User = Depends(get_admi
         db_meta = knowledge_base.global_databases_meta[db_id]
         mindmap_data = db_meta.get("mindmap")
 
-        if not mindmap_data:
-            raise HTTPException(status_code=404, detail="该知识库还没有生成思维导图")
-
         return {
             "message": "success",
             "mindmap": mindmap_data,
@@ -362,40 +360,3 @@ async def get_database_mindmap(db_id: str, current_user: User = Depends(get_admi
     except Exception as e:
         logger.error(f"获取知识库思维导图失败: {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"获取思维导图失败: {str(e)}")
-
-
-@mindmap.post("/database/{db_id}")
-async def save_database_mindmap(
-    db_id: str,
-    mindmap: dict = Body(..., description="思维导图数据"),
-    current_user: User = Depends(get_admin_user),
-):
-    """
-    保存思维导图到知识库
-
-    Args:
-        db_id: 知识库ID
-        mindmap: 思维导图数据
-
-    Returns:
-        保存结果
-    """
-    try:
-        # 检查知识库是否存在
-        db_info = knowledge_base.get_database_info(db_id)
-        if not db_info:
-            raise HTTPException(status_code=404, detail=f"知识库 {db_id} 不存在")
-
-        # TODO: 将思维导图保存到知识库元数据中
-        # 这里需要实现一个方法来更新知识库的元数据
-
-        return {
-            "message": "success",
-            "db_id": db_id,
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"保存思维导图失败: {e}, {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"保存思维导图失败: {str(e)}")

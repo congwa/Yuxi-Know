@@ -55,7 +55,7 @@
                 <!-- 模型选择 -->
                 <div v-if="value.template_metadata.kind === 'llm'" class="model-selector">
                   <ModelSelectorComponent
-                    @select-model="handleModelChange"
+                    @select-model="(spec) => handleModelChange(key, spec)"
                     :model_spec="agentConfig[key] || ''"
                   />
                 </div>
@@ -152,6 +152,7 @@
                     <a-button
                       type="link"
                       size="small"
+                      class="clear-btn"
                       @click="clearSelection(key)"
                       v-if="getSelectedCount(key) > 0"
                     >
@@ -219,12 +220,8 @@
       <div class="sidebar-footer" v-if="!isEmptyConfig">
         <div class="form-actions">
           <a-button @click="saveConfig" class="save-btn" :class="{'changed': agentStore.hasConfigChanges}">
-            保存配置
+            保存配置并重新加载
           </a-button>
-          <!-- TODO：BUG 目前有 bug 暂时不展示 -->
-          <!-- <a-button @click="resetConfig" class="reset-btn">
-            重置
-          </a-button> -->
         </div>
       </div>
     </div>
@@ -367,10 +364,10 @@ const getPlaceholder = (key, value) => {
   return `（默认: ${value.default}）`;
 };
 
-const handleModelChange = (spec) => {
+const handleModelChange = (key, spec) => {
   if (typeof spec !== 'string' || !spec) return;
   agentStore.updateAgentConfig({
-    model: spec
+    [key]: spec
   });
 };
 
@@ -421,17 +418,13 @@ const getToolNameById = (toolId) => {
   return tool ? tool.name : toolId;
 };
 
-const loadAvailableTools = async () => {
-  try {
-    await agentStore.fetchTools();
-  } catch (error) {
-    console.error('加载工具列表失败:', error);
-  }
-};
-
 const openToolsModal = async () => {
+  console.log("availableTools.value", availableTools.value)
   try {
-    await loadAvailableTools();
+    // 强制刷新智能体详情以获取最新工具列表
+    if (selectedAgentId.value) {
+      await agentStore.fetchAgentDetail(selectedAgentId.value, true);
+    }
     selectedTools.value = [...(agentConfig.value?.tools || [])];
     toolsModalOpen.value = true;
   } catch (error) {
@@ -559,13 +552,6 @@ const resetConfig = async () => {
     message.error('重置配置失败');
   }
 };
-
-// 监听器
-watch(() => props.isOpen, (newVal) => {
-  if (newVal && (!availableTools.value || Object.keys(availableTools.value).length === 0)) {
-    loadAvailableTools();
-  }
-});
 </script>
 
 <style lang="less" scoped>
@@ -699,7 +685,8 @@ watch(() => props.isOpen, (newVal) => {
           background-color: var(--gray-25);
           padding: 12px;
           border-radius: 8px;
-          box-shadow: 0px 1px 1px var(--shadow-2);
+          border: 1px solid var(--gray-100);
+          // box-shadow: 0px 0px 2px var(--shadow-3);
 
           :deep(label.form_item_model) {
             font-weight: 600;
@@ -821,12 +808,6 @@ watch(() => props.isOpen, (newVal) => {
       .tools-count {
         color: var(--gray-900);
         font-weight: 500;
-      }
-
-      .clear-btn {
-        padding: 0;
-        height: auto;
-        font-size: 12px;
       }
     }
 
@@ -1133,6 +1114,19 @@ watch(() => props.isOpen, (newVal) => {
         }
       }
     }
+  }
+}
+
+
+.clear-btn {
+  padding: 0;
+  height: auto;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--main-700);
+
+  &:hover {
+    color: var(--main-800);
   }
 }
 

@@ -1,9 +1,7 @@
 <script setup>
-import { ref, reactive, onMounted, useTemplateRef, computed } from 'vue'
+import { ref, reactive, onMounted, useTemplateRef, computed, provide } from 'vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
-import {
-  GithubOutlined,
-} from '@ant-design/icons-vue'
+import { GithubOutlined } from '@ant-design/icons-vue'
 import { Bot, Waypoints, LibraryBig, BarChart3, CircleCheck } from 'lucide-vue-next';
 import { onLongPress } from '@vueuse/core'
 
@@ -15,6 +13,7 @@ import { storeToRefs } from 'pinia'
 import UserInfoComponent from '@/components/UserInfoComponent.vue'
 import DebugComponent from '@/components/DebugComponent.vue'
 import TaskCenterDrawer from '@/components/TaskCenterDrawer.vue'
+import SettingsModal from '@/components/SettingsModal.vue'
 
 const configStore = useConfigStore()
 const databaseStore = useDatabaseStore()
@@ -34,6 +33,14 @@ const isLoadingStars = ref(false)
 // Add state for debug modal
 const showDebugModal = ref(false)
 const htmlRefHook = useTemplateRef('htmlRefHook')
+
+// Add state for settings modal
+const showSettingsModal = ref(false)
+
+// Provide settings modal methods to child components
+const openSettingsModal = () => {
+  showSettingsModal.value = true
+}
 
 // Setup long press for debug modal
 onLongPress(
@@ -60,7 +67,7 @@ const getRemoteConfig = () => {
 }
 
 const getRemoteDatabase = () => {
-  databaseStore.getDatabaseInfo(undefined, false) // Explicitly load query params for remote database
+  databaseStore.loadDatabases()
 }
 
 // Fetch GitHub stars count
@@ -85,6 +92,8 @@ onMounted(async () => {
   getRemoteConfig()
   getRemoteDatabase()
   fetchGithubStars() // Fetch GitHub stars on mount
+  // 预加载任务数据，确保任务中心打开时有内容
+  taskerStore.loadTasks()
 })
 
 // 打印当前页面的路由信息，使用 vue3 的 setup composition API
@@ -116,6 +125,11 @@ const mainList = [{
     activeIcon: BarChart3,
   }
 ]
+
+// Provide settings modal methods to child components
+provide('settingsModal', {
+  openSettingsModal
+})
 </script>
 
 <template>
@@ -195,7 +209,6 @@ const mainList = [{
     <div class="header-mobile">
       <RouterLink to="/agent" class="nav-item" active-class="active">对话</RouterLink>
       <RouterLink to="/database" class="nav-item" active-class="active">知识</RouterLink>
-      <RouterLink to="/setting" class="nav-item" active-class="active">设置</RouterLink>
     </div>
     <router-view v-slot="{ Component, route }" id="app-router-view">
       <keep-alive v-if="route.meta.keepAlive !== false">
@@ -218,6 +231,10 @@ const mainList = [{
       <DebugComponent />
     </a-modal>
     <TaskCenterDrawer />
+    <SettingsModal
+      v-model:visible="showSettingsModal"
+      @close="() => showSettingsModal = false"
+    />
   </div>
 </template>
 
@@ -310,8 +327,8 @@ div.header, #app-router-view {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 40px;
-    height: 40px;
+    width: 36px;
+    height: 36px;
     padding: 4px;
     border: 1px solid transparent;
     border-radius: 12px;

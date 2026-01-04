@@ -4,7 +4,7 @@ import traceback
 from lightrag import LightRAG, QueryParam
 from lightrag.kg.shared_storage import initialize_pipeline_status
 from lightrag.llm.openai import openai_complete_if_cache, openai_embed
-from lightrag.utils import EmbeddingFunc, setup_logger
+from lightrag.utils import EmbeddingFunc
 from neo4j import GraphDatabase
 from pymilvus import connections, utility
 
@@ -13,7 +13,6 @@ from src.knowledge.base import KnowledgeBase
 from src.knowledge.indexing import process_file_to_markdown
 from src.knowledge.utils.kb_utils import get_embedding_config, prepare_item_metadata
 from src.utils import hashstr, logger
-from src.utils.datetime_utils import shanghai_now
 
 
 class LightRagKB(KnowledgeBase):
@@ -35,10 +34,13 @@ class LightRagKB(KnowledgeBase):
         # 设置 LightRAG 日志
         log_dir = os.path.join(work_dir, "logs", "lightrag")
         os.makedirs(log_dir, exist_ok=True)
-        setup_logger(
-            "lightrag",
-            log_file_path=os.path.join(log_dir, f"lightrag_{shanghai_now().strftime('%Y-%m-%d')}.log"),
-        )
+        # 禁止调用 lightrag.utils.setup_logger，因为它会重置全局 logger 配置（调用 logger.remove()）
+        # 导致主程序的控制台输出丢失。
+        # 全局 logger 已在 src/utils/logging_config.py 中配置好。
+        # setup_logger(
+        #     "lightrag",
+        #     log_file_path=os.path.join(log_dir, f"lightrag_{shanghai_now().strftime('%Y-%m-%d')}.log"),
+        # )
 
         logger.info("LightRagKB initialized")
 
@@ -200,6 +202,7 @@ class LightRagKB(KnowledgeBase):
     def _get_embedding_func(self, embed_info: dict):
         """获取 embedding 函数"""
         config_dict = get_embedding_config(embed_info)
+        logger.debug(f"Embedding config dict: {config_dict}")
 
         if config_dict.get("model_id") and config_dict["model_id"].startswith("ollama"):
             from lightrag.llm.ollama import ollama_embed
@@ -219,12 +222,19 @@ class LightRagKB(KnowledgeBase):
                 ),
             )
 
+        # 尝试获取模型名称，支持多种键名以保持兼容性
+        if "name" in config_dict and config_dict["name"]:
+            model_name = config_dict["name"]
+        elif "model" in config_dict and config_dict["model"]:
+            model_name = config_dict["model"]
+        else:
+            raise ValueError(f"Neither 'name' nor 'model' found in config_dict or both are empty: {config_dict}")
         return EmbeddingFunc(
             embedding_dim=config_dict["dimension"],
             max_token_size=8192,
             func=lambda texts: openai_embed(
                 texts=texts,
-                model=config_dict["model"],
+                model=model_name,
                 api_key=config_dict["api_key"],
                 base_url=config_dict["base_url"].replace("/embeddings", ""),
             ),

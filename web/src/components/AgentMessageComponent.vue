@@ -4,6 +4,10 @@
   </div>
   <div class="message-box" :class="[message.type, customClasses]">
     <!-- 用户消息 -->
+    <div v-if="message.type === 'human'" class="message-copy-btn human-copy" @click="copyToClipboard(message.content)" :class="{ 'is-copied': isCopied }">
+      <Check v-if="isCopied" size="14" />
+      <Copy v-else size="14" />
+    </div>
     <p v-if="message.type === 'human'" class="message-text">{{ message.content }}</p>
 
     <p v-else-if="message.type === 'system'" class="message-text-system">{{ message.content }}</p>
@@ -44,39 +48,7 @@
 
       <div v-if="validToolCalls && validToolCalls.length > 0" class="tool-calls-container">
         <div v-for="(toolCall, index) in validToolCalls" :key="toolCall.id || index" class="tool-call-container">
-          <div v-if="toolCall" class="tool-call-display" :class="{ 'is-collapsed': !expandedToolCalls.has(toolCall.id) }">
-            <div class="tool-header" @click="toggleToolCall(toolCall.id)">
-              <span v-if="toolCall.status === 'success' || toolCall.tool_call_result">
-                <span><CircleCheckBig size="16" class="tool-loader tool-success" /></span> &nbsp; 工具 <span class="tool-name">{{ getToolNameByToolCall(toolCall) }}</span> 执行完成
-              </span>
-              <span v-else-if="toolCall.status === 'error'">
-                <span><CircleCheckBig size="16" class="tool-loader tool-error" /></span> &nbsp; 工具 <span class="tool-name">{{ getToolNameByToolCall(toolCall) }}</span> 执行失败
-                <span v-if="toolCall.error_message">（{{ toolCall.error_message }}）</span>
-              </span>
-              <span v-else>
-                <span><Loader size="16" class="tool-loader rotate tool-loading" /></span> &nbsp;
-                <span>正在调用工具: </span>
-                <span class="tool-name">{{ getToolNameByToolCall(toolCall) }}</span>
-              </span>
-            </div>
-            <div class="tool-content" v-show="expandedToolCalls.has(toolCall.id)">
-              <div class="tool-params" v-if="toolCall.args || toolCall.function?.arguments">
-                <div class="tool-params-content">
-                  <strong>参数:</strong>
-                  <span v-if="getFormattedToolArgs(toolCall)">{{ getFormattedToolArgs(toolCall) }}</span>
-                  <span v-else>{{ toolCall.args || toolCall.function?.arguments }}</span>
-                </div>
-              </div>
-              <div class="tool-result" v-if="toolCall.tool_call_result && toolCall.tool_call_result.content">
-                <div class="tool-result-content" :data-tool-call-id="toolCall.id">
-                  <ToolResultRenderer
-                    :tool-name="toolCall.name || toolCall.function?.name"
-                    :result-content="toolCall.tool_call_result.content"
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
+          <ToolCallRenderer :tool-call="toolCall" />
         </div>
       </div>
 
@@ -103,8 +75,8 @@
 import { computed, ref } from 'vue';
 import { CaretRightOutlined, ThunderboltOutlined, LoadingOutlined } from '@ant-design/icons-vue';
 import RefsComponent from '@/components/RefsComponent.vue'
-import { Loader, CircleCheckBig } from 'lucide-vue-next';
-import { ToolResultRenderer } from '@/components/ToolCallingResult'
+import { Copy, Check } from 'lucide-vue-next';
+import { ToolCallRenderer } from '@/components/ToolCallingResult'
 import { useAgentStore } from '@/stores/agent'
 import { useInfoStore } from '@/stores/info'
 import { useThemeStore } from '@/stores/theme'
@@ -151,9 +123,38 @@ const editorRef = ref()
 
 const emit = defineEmits(['retry', 'retryStoppedMessage', 'openRefs']);
 
+// 复制状态
+const isCopied = ref(false);
+
+const copyToClipboard = async (text) => {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      // 降级处理：使用传统的 execCommand 方法
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      textArea.style.top = '-999999px';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      const successful = document.execCommand('copy');
+      document.body.removeChild(textArea);
+      if (!successful) throw new Error('execCommand failed');
+    }
+    isCopied.value = true;
+    setTimeout(() => {
+      isCopied.value = false;
+    }, 2000);
+  } catch (err) {
+    console.error('Failed to copy: ', err);
+  }
+};
+
 // 推理面板展开状态
 const reasoningActiveKey = ref(['hide']);
-const expandedToolCalls = ref(new Set()); // 展开的工具调用集合
 
 // 错误消息处理
 const displayError = computed(() => {
@@ -191,35 +192,9 @@ const getErrorMessage = computed(() => {
 const agentStore = useAgentStore();
 const infoStore = useInfoStore();
 const themeStore = useThemeStore();
-const { availableTools } = storeToRefs(agentStore);
 
 // 主题设置 - 根据系统主题动态切换
 const theme = computed(() => themeStore.isDark ? 'dark' : 'light');
-
-// 工具相关方法
-const getToolNameByToolCall = (toolCall) => {
-  const toolId = toolCall.name || toolCall.function?.name;
-  const toolsList = availableTools.value ? Object.values(availableTools.value) : [];
-  const tool = toolsList.find(t => t.id === toolId);
-  return tool ? tool.name : toolId;
-};
-
-const getFormattedToolArgs = (toolCall) => {
-  const args = toolCall.args || toolCall.function?.arguments;
-  if (!args) return '';
-
-  try {
-    // 尝试解析JSON格式的参数
-    if (typeof args === 'string' && args.trim().startsWith('{')) {
-      const parsed = JSON.parse(args);
-      return JSON.stringify(parsed, null, 2);
-    }
-  } catch (e) {
-    // 如果解析失败，直接返回原始字符串
-  }
-
-  return args;
-};
 
 // 过滤有效的工具调用
 const validToolCalls = computed(() => {
@@ -265,14 +240,6 @@ const parsedData = computed(() => {
     reasoning_content,
   };
 });
-
-const toggleToolCall = (toolCallId) => {
-  if (expandedToolCalls.value.has(toolCallId)) {
-    expandedToolCalls.value.delete(toolCallId);
-  } else {
-    expandedToolCalls.value.add(toolCallId);
-  }
-};
 </script>
 
 <style lang="less" scoped>
@@ -315,6 +282,38 @@ const toggleToolCall = (toolCallId) => {
     max-width: 100%;
     margin-bottom: 0;
     white-space: pre-line;
+  }
+
+  .message-copy-btn {
+    cursor: pointer;
+    color: var(--gray-400);
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    flex-shrink: 0;
+
+    &:hover {
+      color: var(--main-color);
+    }
+
+    &.is-copied {
+      color: var(--color-success-500);
+      opacity: 1;
+    }
+
+    &.human-copy {
+      position: absolute;
+      left: -28px;
+      bottom: 8px;
+    }
+  }
+
+  &:hover {
+    .message-copy-btn {
+      opacity: 1;
+    }
   }
 
   .message-text-system {
@@ -501,6 +500,13 @@ const toggleToolCall = (toolCallId) => {
       .tool-loader.tool-loading {
         color: var(--color-info-500);
       }
+
+      .tool-expand-icon {
+        margin-left: auto;
+        color: var(--gray-400);
+        display: flex;
+        align-items: center;
+      }
     }
 
     .tool-content {
@@ -513,7 +519,7 @@ const toggleToolCall = (toolCallId) => {
 
         .tool-params-content {
           margin: 0;
-          font-size: 13px;
+          font-size: 12px;
           overflow-x: auto;
           color: var(--gray-700);
           line-height: 1.5;
@@ -671,11 +677,50 @@ const toggleToolCall = (toolCallId) => {
 
   cite {
     font-size: 12px;
-    color: var(--gray-700);
+    color: var(--gray-800);
     font-style: normal;
     background-color: var(--gray-200);
     border-radius: 4px;
     outline: 2px solid var(--gray-200);
+    padding: 0rem 0.25rem;
+    margin-left: 4px;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+
+    &:hover::after {
+      content: attr(source);
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 8px 12px;
+      background-color: var(--gray-900);
+      color: #fff;
+      font-size: 13px;
+      line-height: 1.5;
+      border-radius: 6px;
+      min-width: 200px;
+      max-width: 400px;
+      width: max-content;
+      white-space: normal;
+      word-break: break-word;
+      z-index: 1000;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+      pointer-events: none;
+      text-align: center;
+    }
+
+    &:hover::before {
+      content: '';
+      position: absolute;
+      bottom: 100%;
+      left: 50%;
+      transform: translateX(-50%);
+      border: 5px solid transparent;
+      border-top-color: var(--gray-900);
+      z-index: 1000;
+    }
   }
 
   a {

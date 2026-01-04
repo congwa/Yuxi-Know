@@ -22,9 +22,9 @@
               <div class="agent-card-header">
                 <div class="agent-card-title">
                   <span class="agent-card-name">{{ agent.name || 'Unknown' }}</span>
-                  <StarFilled v-if="agent.id === defaultAgentId" class="default-icon" />
-                  <StarOutlined v-else @click.prevent="setAsDefaultAgent(agent.id)" class="default-icon" />
                 </div>
+                <StarFilled v-if="agent.id === defaultAgentId" class="default-icon" />
+                <StarOutlined v-else @click.prevent="setAsDefaultAgent(agent.id)" class="default-icon" />
               </div>
 
               <div class="agent-card-description">
@@ -44,10 +44,10 @@
           @open-agent-modal="openAgentModal"
           @close-config-sidebar="() => chatUIStore.isConfigSidebarOpen = false"
         >
-          <template #header-right>
+          <template #header-right="{ isMediumContainer }">
             <div type="button" class="agent-nav-btn" @click="toggleConf">
               <Settings2 size="18" class="nav-btn-icon"/>
-              <span class="text">配置</span>
+              <span class="text" :class="{ 'hide-text': isMediumContainer }">配置</span>
             </div>
             <div v-if="selectedAgentId" ref="moreButtonRef" type="button" class="agent-nav-btn" @click="toggleMoreMenu">
               <Ellipsis size="18"  class="nav-btn-icon"/>
@@ -165,13 +165,6 @@ const loadAgentConfig = async () => {
   }
 };
 
-// 监听智能体选择变化
-watch(
-  () => selectedAgentId.value,
-  () => {
-    loadAgentConfig();
-  }
-);
 
 // 选择智能体（使用store方法）
 const selectAgent = (agentId) => {
@@ -434,12 +427,6 @@ const handlePreview = () => {
       word-break: break-word;
       white-space: pre-wrap;
     }
-  }
-
-  .default-icon {
-    color: var(--color-warning-500);
-    font-size: 14px;
-    margin-left: 4px;
   }
 }
 // 工具选择器样式（与项目风格一致）
@@ -761,11 +748,6 @@ const handlePreview = () => {
       color: var(--gray-900);
       font-weight: 500;
     }
-
-    .default-icon {
-      color: var(--color-warning-500);
-      font-size: 14px;
-    }
   }
 }
 
@@ -821,9 +803,6 @@ const handlePreview = () => {
         margin-bottom: 12px;
 
         .agent-card-title {
-          display: flex;
-          align-items: center;
-          gap: 8px;
           flex: 1;
 
           .agent-card-name {
@@ -832,11 +811,17 @@ const handlePreview = () => {
             color: var(--gray-900);
             line-height: 1.4;
           }
+        }
 
-          .default-icon {
-            color: var(--color-warning-500);
-            font-size: 16px;
-            flex-shrink: 0;
+        .default-icon {
+          color: var(--color-warning-500);
+          font-size: 16px;
+          flex-shrink: 0;
+          margin-left: 8px;
+          cursor: pointer;
+
+          &:hover {
+            color: var(--color-warning-600);
           }
         }
       }
@@ -1023,5 +1008,9 @@ const handlePreview = () => {
     font-size: 14px;
     font-weight: 500;
   }
+}
+
+.hide-text {
+  display: none;
 }
 </style>

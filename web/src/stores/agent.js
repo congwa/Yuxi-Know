@@ -19,13 +19,9 @@ export const useAgentStore = defineStore('agent', () => {
   // 智能体详情相关状态
   const agentDetails = ref({}) // 存储每个智能体的详细信息（含 configurable_items）
 
-  // 工具相关状态
-  const availableTools = ref([])
-
   // 加载状态
   const isLoadingAgents = ref(false)
   const isLoadingConfig = ref(false)
-  const isLoadingTools = ref(false)
   const isLoadingAgentDetail = ref(false)
 
   // 错误状态
@@ -33,6 +29,7 @@ export const useAgentStore = defineStore('agent', () => {
 
   // 初始化状态
   const isInitialized = ref(false)
+  const isInitializing = ref(false)
 
   // ==================== 计算属性 ====================
   const selectedAgent = computed(() =>
@@ -65,6 +62,12 @@ export const useAgentStore = defineStore('agent', () => {
     return items
   })
 
+
+  // 工具相关状态
+  const availableTools = computed(() => {
+    return configurableItems.value.tools?.options || []
+  })
+
   const hasConfigChanges = computed(() =>
     JSON.stringify(agentConfig.value) !== JSON.stringify(originalAgentConfig.value)
   )
@@ -75,6 +78,10 @@ export const useAgentStore = defineStore('agent', () => {
    */
   async function initialize() {
     if (isInitialized.value) return
+
+    // 防止并发初始化
+    if (isInitializing.value) return
+    isInitializing.value = true
 
     try {
       await fetchAgents()
@@ -103,7 +110,6 @@ export const useAgentStore = defineStore('agent', () => {
         if (userStore.isAdmin) {
           await loadAgentConfig()
         }
-        await fetchTools()
       }
 
       isInitialized.value = true
@@ -111,6 +117,8 @@ export const useAgentStore = defineStore('agent', () => {
       console.error('Failed to initialize agent store:', err)
       handleChatError(err, 'initialize')
       error.value = err.message
+    } finally {
+      isInitializing.value = false
     }
   }
 
@@ -138,11 +146,11 @@ export const useAgentStore = defineStore('agent', () => {
    * 获取单个智能体的详细信息（包含配置选项）
    * @param {string} agentId - 智能体ID
    */
-  async function fetchAgentDetail(agentId) {
+  async function fetchAgentDetail(agentId, forceRefresh = false) {
     if (!agentId) return
 
-    // 如果已经缓存了详细信息，直接返回
-    if (agentDetails.value[agentId]) {
+    // 如果已经缓存了详细信息且不强制刷新，直接返回
+    if (!forceRefresh && agentDetails.value[agentId]) {
       return agentDetails.value[agentId]
     }
 
@@ -152,6 +160,7 @@ export const useAgentStore = defineStore('agent', () => {
     try {
       const response = await agentApi.getAgentDetail(agentId)
       agentDetails.value[agentId] = response
+      // availableTools.value[agentId] = response.available_tools || []
       return response
     } catch (err) {
       console.error(`Failed to fetch agent detail for ${agentId}:`, err)
@@ -240,13 +249,14 @@ export const useAgentStore = defineStore('agent', () => {
 
   /**
    * 保存智能体配置
+   * @param {Object} options - 额外参数 (e.g., { reload_graph: true })
    */
-  async function saveAgentConfig(agentId = null) {
-    const targetAgentId = agentId || selectedAgentId.value
+  async function saveAgentConfig(options = {}) {
+    const targetAgentId = selectedAgentId.value
     if (!targetAgentId) return
 
     try {
-      await agentApi.saveAgentConfig(targetAgentId, agentConfig.value)
+      await agentApi.saveAgentConfig(targetAgentId, agentConfig.value, options)
       originalAgentConfig.value = { ...agentConfig.value }
     } catch (err) {
       console.error('Failed to save agent config:', err)
@@ -277,25 +287,6 @@ export const useAgentStore = defineStore('agent', () => {
     Object.assign(agentConfig.value, updates)
   }
 
-  /**
-   * 获取工具列表
-   */
-  async function fetchTools() {
-    isLoadingTools.value = true
-    error.value = null
-
-    try {
-      const response = await agentApi.getTools(selectedAgentId.value)
-      availableTools.value = response.tools
-    } catch (err) {
-      console.error('Failed to fetch tools:', err)
-      handleChatError(err, 'fetch')
-      error.value = err.message
-      throw err
-    } finally {
-      isLoadingTools.value = false
-    }
-  }
 
   /**
    * 清除错误状态
@@ -314,13 +305,12 @@ export const useAgentStore = defineStore('agent', () => {
     agentConfig.value = {}
     originalAgentConfig.value = {}
     agentDetails.value = {}
-    availableTools.value = []
     isLoadingAgents.value = false
     isLoadingConfig.value = false
-    isLoadingTools.value = false
     isLoadingAgentDetail.value = false
     error.value = null
     isInitialized.value = false
+    isInitializing.value = false
   }
 
   return {
@@ -331,10 +321,8 @@ export const useAgentStore = defineStore('agent', () => {
     agentConfig,
     originalAgentConfig,
     agentDetails,
-    availableTools,
     isLoadingAgents,
     isLoadingConfig,
-    isLoadingTools,
     isLoadingAgentDetail,
     error,
     isInitialized,
@@ -345,6 +333,7 @@ export const useAgentStore = defineStore('agent', () => {
     agentsList,
     isDefaultAgent,
     configurableItems,
+    availableTools,
     hasConfigChanges,
 
     // 方法
@@ -359,7 +348,6 @@ export const useAgentStore = defineStore('agent', () => {
     resetAgentConfig,
     updateConfigItem,
     updateAgentConfig,
-    fetchTools,
     clearError,
     reset
   }

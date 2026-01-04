@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import pathlib
@@ -20,9 +21,6 @@ except ImportError:
     # 如果迁移工具不存在，使用简单的占位函数
     def validate_database_schema(db_path):
         return True, []
-
-# TODO:[已完成]为DBManager添加异步支持
-# TODO:[已完成]为DBManager添加单例模式
 
 
 class DBManager(metaclass=SingletonMeta):
@@ -128,7 +126,9 @@ class DBManager(metaclass=SingletonMeta):
             logger.error(f"Async database operation failed: {e}")
             raise
         finally:
-            await session.close()
+            # Shield close operation to ensure connection is properly closed even if task is cancelled
+            # This prevents aiosqlite from raising errors during cancellation
+            await asyncio.shield(session.close())
 
     def check_first_run(self):
         """检查是否首次运行（同步版本）"""

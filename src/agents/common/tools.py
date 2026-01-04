@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from src import config, graph_base, knowledge_base
 from src.utils import logger
 
-search = TavilySearch(max_results=10)
+search = TavilySearch()
 search.metadata = {"name": "Tavily 网页搜索"}
 
 
@@ -122,16 +122,25 @@ class KnowledgeRetrieverModel(BaseModel):
     )
 
 
-def get_kb_based_tools() -> list:
+class CommonKnowledgeRetriever(KnowledgeRetrieverModel):
+    """Common knowledge retriever model."""
+
+    file_name: str = Field(description="限定文件名称，当操作类型为 'search' 时，可以指定文件名称，支持模糊匹配")
+
+
+def get_kb_based_tools(db_names: list[str] | None = None) -> list:
     """获取所有知识库基于的工具"""
     # 获取所有知识库
     kb_tools = []
     retrievers = knowledge_base.get_retrievers()
+    db_ids = [kb_id for kb_id, kb in retrievers.items() if kb["name"] in db_names] or None
 
     def _create_retriever_wrapper(db_id: str, retriever_info: dict[str, Any]):
         """创建检索器包装函数的工厂函数，避免闭包变量捕获问题"""
 
-        async def async_retriever_wrapper(query_text: str, operation: str = "search") -> Any:
+        async def async_retriever_wrapper(
+            query_text: str, operation: str = "search", file_name: str | None = None
+        ) -> Any:
             """异步检索器包装函数，支持检索和获取思维导图"""
 
             # 获取思维导图
@@ -172,10 +181,14 @@ def get_kb_based_tools() -> list:
             retriever = retriever_info["retriever"]
             try:
                 logger.debug(f"Retrieving from database {db_id} with query: {query_text}")
+                kwargs = {}
+                if file_name:
+                    kwargs["file_name"] = file_name
+
                 if asyncio.iscoroutinefunction(retriever):
-                    result = await retriever(query_text)
+                    result = await retriever(query_text, **kwargs)
                 else:
-                    result = retriever(query_text)
+                    result = retriever(query_text, **kwargs)
                 logger.debug(f"Retrieved {len(result) if isinstance(result, list) else 'N/A'} results from {db_id}")
                 return result
             except Exception as e:
@@ -185,6 +198,9 @@ def get_kb_based_tools() -> list:
         return async_retriever_wrapper
 
     for db_id, retrieve_info in retrievers.items():
+        if db_ids is not None and db_id not in db_ids:
+            continue
+
         try:
             # 构建工具描述
             description = (
@@ -203,12 +219,16 @@ def get_kb_based_tools() -> list:
 
             safename = retrieve_info["name"].replace(" ", "_")[:20]
 
+            args_schema = KnowledgeRetrieverModel
+            if retrieve_info["metadata"]["kb_type"] in ["milvus"]:
+                args_schema = CommonKnowledgeRetriever
+
             # 使用 StructuredTool.from_function 创建异步工具
             tool = StructuredTool.from_function(
                 coroutine=retriever_wrapper,
                 name=safename,
                 description=description,
-                args_schema=KnowledgeRetrieverModel,
+                args_schema=args_schema,
                 metadata=retrieve_info["metadata"] | {"tag": ["knowledgebase"]},
             )
 
@@ -227,8 +247,6 @@ def get_buildin_tools() -> list:
     tools = []
 
     try:
-        # 获取所有知识库基于的工具
-        tools.extend(get_kb_based_tools())
         tools.extend(get_static_tools())
 
         from src.agents.common.toolkits.mysql.tools import get_mysql_tools

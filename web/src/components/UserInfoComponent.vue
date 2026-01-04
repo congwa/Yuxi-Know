@@ -29,8 +29,8 @@
             <component :is="themeStore.isDark ? Sun : Moon" size="16"/>
             <span class="menu-text">{{ themeStore.isDark ? '切换到浅色模式' : '切换到深色模式 (Beta)' }}</span>
           </a-menu-item>
-          <a-menu-divider />
-          <a-menu-item key="setting" @click="goToSetting">
+          <a-menu-divider v-if="userStore.isAdmin"/>
+          <a-menu-item v-if="userStore.isAdmin" key="setting" @click="goToSetting">
             <Settings size="16"/>
             <span class="menu-text">系统设置</span>
           </a-menu-item>
@@ -158,7 +158,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, ref, inject } from 'vue';
 import { useRouter } from 'vue-router';
 import { useUserStore } from '@/stores/user';
 //
@@ -172,6 +172,9 @@ import { useThemeStore } from '@/stores/theme'
 const router = useRouter();
 const userStore = useUserStore();
 const themeStore = useThemeStore();
+
+// Inject settings modal methods
+const { openSettingsModal } = inject('settingsModal', {});
 
 // 个人资料弹窗状态
 const profileModalVisible = ref(false);
@@ -245,7 +248,9 @@ const toggleTheme = () => {
 
 // 前往设置页
 const goToSetting = () => {
-  router.push('/setting');
+  if (openSettingsModal) {
+    openSettingsModal()
+  }
 }
 
 // 打开个人资料页面
@@ -395,8 +400,8 @@ const handleAvatarChange = async (info) => {
 }
 
 .user-avatar {
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -406,6 +411,7 @@ const handleAvatarChange = async (info) => {
   cursor: pointer;
   position: relative;
   overflow: hidden;
+  box-shadow: 0 2px 8px var(--shadow-2);
 
   &:hover {
     opacity: 0.9;
