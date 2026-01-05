@@ -13,6 +13,7 @@
         v-model:visible="addFilesModalVisible"
         :folder-tree="folderTree"
         :current-folder-id="currentFolderId"
+        :is-folder-mode="isFolderUploadMode"
         @success="onFileUploadSuccess"
       />
 
@@ -30,7 +31,7 @@
 
     <div class="right-panel" :style="{ width: (100 - leftPanelWidth) + '%', display: store.state.rightPanelVisible ? 'flex' : 'none' }">
       <a-tabs v-model:activeKey="activeTab" class="knowledge-tabs" :tabBarStyle="{ margin: 0, padding: '0 16px' }">
-        <template #tabBarExtraContent>
+        <template #rightExtra>
           <a-tooltip title="检索配置" placement="bottom">
             <a-button
               type="text"
@@ -224,12 +225,15 @@ const openSearchConfigModal = () => {
 // 添加文件弹窗
 const addFilesModalVisible = ref(false);
 const currentFolderId = ref(null);
+const isFolderUploadMode = ref(false);
 
 // 标记是否是初次加载
 const isInitialLoad = ref(true);
 
 // 显示添加文件弹窗
-const showAddFilesModal = () => {
+const showAddFilesModal = (options = {}) => {
+  const { isFolder = false } = options;
+  isFolderUploadMode.value = isFolder;
   addFilesModalVisible.value = true;
   currentFolderId.value = null; // 重置
 };
