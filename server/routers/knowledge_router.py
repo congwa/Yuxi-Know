@@ -1,23 +1,22 @@
-import aiofiles
 import asyncio
 import os
-import traceback
 import textwrap
-from collections.abc import Mapping
+import traceback
 from urllib.parse import quote, unquote
 
+import aiofiles
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse
 from starlette.responses import StreamingResponse
 
-from src.storage.db.models import User
-from server.utils.auth_middleware import get_admin_user
 from server.services.tasker import TaskContext, tasker
+from server.utils.auth_middleware import get_admin_user
 from src import config, knowledge_base
 from src.knowledge.indexing import SUPPORTED_FILE_EXTENSIONS, is_supported_file_extension, process_file_to_markdown
 from src.knowledge.utils import calculate_content_hash
-from src.models.embed import test_embedding_model_status, test_all_embedding_models_status
-from src.storage.minio.client import aupload_file_to_minio, get_minio_client, StorageError
+from src.models.embed import test_all_embedding_models_status, test_embedding_model_status
+from src.storage.db.models import User
+from src.storage.minio.client import StorageError, aupload_file_to_minio, get_minio_client
 from src.utils import logger
 
 knowledge = APIRouter(prefix="/knowledge", tags=["knowledge"])
@@ -93,53 +92,21 @@ async def create_database(
         additional_params = {**(additional_params or {})}
         additional_params["auto_generate_questions"] = False  # 默认不生成问题
 
-        def normalize_reranker_config(kb: str, params: dict) -> None:
+        def remove_reranker_config(kb: str, params: dict) -> None:
+            """
+            移除 reranker_config（已废弃）
+            所有 reranker 参数现在通过 query_params.options 配置
+            """
             reranker_cfg = params.get("reranker_config")
-            if kb not in {"milvus"}:
-                if kb == "lightrag" and reranker_cfg:
-                    logger.warning("LightRAG does not support reranker, ignoring reranker_config")
-                    params.pop("reranker_config", None)
-                return
+            if reranker_cfg:
+                if kb == "milvus":
+                    logger.info("reranker_config is deprecated, please use query_params.options instead")
+                else:
+                    logger.warning(f"{kb} does not support reranker, ignoring reranker_config")
+                # 移除 reranker_config，不再保存
+                params.pop("reranker_config", None)
 
-            if not reranker_cfg:
-                params["reranker_config"] = {
-                    "enabled": False,
-                    "model": "",
-                    "recall_top_k": 50,
-                    "final_top_k": 10,
-                }
-                return
-
-            if not isinstance(reranker_cfg, Mapping):
-                raise HTTPException(status_code=400, detail="reranker_config must be an object")
-
-            reranker_enabled = bool(reranker_cfg.get("enabled", False))
-            model = (reranker_cfg.get("model") or "").strip()
-            recall_top_k = max(1, int(reranker_cfg.get("recall_top_k", 50)))
-            final_top_k = max(1, int(reranker_cfg.get("final_top_k", 10)))
-
-            if reranker_enabled:
-                if not model:
-                    raise HTTPException(status_code=400, detail="reranker_config.model is required when enabled")
-                if model not in config.reranker_names:
-                    raise HTTPException(status_code=400, detail=f"Unsupported reranker model: {model}")
-                if final_top_k > recall_top_k:
-                    logger.warning(
-                        f"final_top_k ({final_top_k}) cannot exceed recall_top_k ({recall_top_k}); "
-                        "adjusting recall_top_k to match final_top_k"
-                    )
-                    recall_top_k = final_top_k
-            else:
-                model = model if model in config.reranker_names else ""
-
-            params["reranker_config"] = {
-                "enabled": reranker_enabled,
-                "model": model,
-                "recall_top_k": recall_top_k,
-                "final_top_k": final_top_k,
-            }
-
-        normalize_reranker_config(kb_type, additional_params)
+        remove_reranker_config(kb_type, additional_params)
 
         embed_info = config.embed_model_names[embed_model_name]
         database_info = await knowledge_base.create_database(
@@ -364,8 +331,9 @@ async def add_documents(
         return summary | {"items": processed_items}
 
     try:
+        database = knowledge_base.get_database_info(db_id)
         task = await tasker.enqueue(
-            name=f"知识库文档处理({db_id})",
+            name=f"知识库文档处理 ({database['name']})",
             task_type="knowledge_ingest",
             payload={
                 "db_id": db_id,
@@ -421,8 +389,9 @@ async def parse_documents(db_id: str, file_ids: list[str] = Body(...), current_u
         return {"items": processed_items}
 
     try:
+        database = knowledge_base.get_database_info(db_id)
         task = await tasker.enqueue(
-            name=f"文档解析({db_id})",
+            name=f"文档解析 ({database['name']})",
             task_type="knowledge_parse",
             payload={"db_id": db_id, "file_ids": file_ids},
             coroutine=run_parse,
@@ -464,11 +433,9 @@ async def index_documents(
                     except Exception as e:
                         logger.error(f"Failed to update params for {file_id}: {e}")
                         param_update_failed.add(file_id)
-                        processed_items.append({
-                            "file_id": file_id,
-                            "status": "failed",
-                            "error": f"参数更新失败: {str(e)}"
-                        })
+                        processed_items.append(
+                            {"file_id": file_id, "status": "failed", "error": f"参数更新失败: {str(e)}"}
+                        )
 
             for idx, file_id in enumerate(file_ids, 1):
                 await context.raise_if_cancelled()
@@ -499,8 +466,9 @@ async def index_documents(
         return {"items": processed_items}
 
     try:
+        database = knowledge_base.get_database_info(db_id)
         task = await tasker.enqueue(
-            name=f"文档入库({db_id})",
+            name=f"文档入库 ({database['name']})",
             task_type="knowledge_index",
             payload={"db_id": db_id, "file_ids": file_ids, "params": params},
             coroutine=run_index,
@@ -578,6 +546,7 @@ async def delete_document(db_id: str, doc_id: str, current_user: User = Depends(
     except Exception as e:
         logger.error(f"删除文档失败 {e}, {traceback.format_exc()}")
         raise HTTPException(status_code=400, detail=f"删除文档失败: {e}")
+
 
 @knowledge.get("/databases/{db_id}/documents/{doc_id}/download")
 async def download_document(db_id: str, doc_id: str, request: Request, current_user: User = Depends(get_admin_user)):
@@ -752,23 +721,16 @@ async def update_knowledge_base_query_params(
         if not kb_instance:
             raise HTTPException(status_code=404, detail="Knowledge base not found")
 
-        # 更新知识库元数据中的查询参数
+        # 更新实例元数据中的查询参数
         async with knowledge_base._metadata_lock:
-            # 确保知识库元数据存在
-            if db_id not in knowledge_base.global_databases_meta:
-                knowledge_base.global_databases_meta[db_id] = {}
+            # 确保 db_id 在实例的 databases_meta 中
+            if db_id not in kb_instance.databases_meta:
+                raise HTTPException(status_code=404, detail="Database not found in instance metadata")
 
-            # 初始化 query_params 结构
-            if "query_params" not in knowledge_base.global_databases_meta[db_id]:
-                knowledge_base.global_databases_meta[db_id]["query_params"] = {}
-
-            # 将参数保存到 options 下，与评估服务期望的结构一致
-            if "options" not in knowledge_base.global_databases_meta[db_id]["query_params"]:
-                knowledge_base.global_databases_meta[db_id]["query_params"]["options"] = {}
-
-            # 更新 options
-            knowledge_base.global_databases_meta[db_id]["query_params"]["options"].update(params)
-            knowledge_base._save_global_metadata()
+            # 使用 setdefault 简化嵌套字典的初始化
+            options = kb_instance.databases_meta[db_id].setdefault("query_params", {}).setdefault("options", {})
+            options.update(params)
+            kb_instance._save_metadata()
 
             logger.info(f"更新知识库 {db_id} 查询参数: {params}")
 
@@ -783,171 +745,34 @@ async def update_knowledge_base_query_params(
 async def get_knowledge_base_query_params(db_id: str, current_user: User = Depends(get_admin_user)):
     """获取知识库类型特定的查询参数"""
     try:
-        # 获取数据库信息
-        db_info = knowledge_base.get_database_info(db_id)
-        if not db_info:
-            raise HTTPException(status_code=404, detail="Database not found")
+        # 获取知识库实例
+        kb_instance = knowledge_base._get_kb_for_database(db_id)
 
-        kb_type = db_info.get("kb_type", "lightrag")
-        metadata = db_info.get("metadata", {}) or {}
-        reranker_config = metadata.get("reranker_config", {}) or {}
-        reranker_enabled = bool(reranker_config.get("enabled", False))
+        # 调用知识库实例的方法获取配置
+        params = kb_instance.get_query_params_config(
+            db_id=db_id,
+            reranker_names=config.reranker_names,  # 传递动态配置
+        )
 
-        # 根据知识库类型返回不同的查询参数
-        if kb_type == "lightrag":
-            params = {
-                "type": "lightrag",
-                "options": [
-                    {
-                        "key": "mode",
-                        "label": "检索模式",
-                        "type": "select",
-                        "default": "mix",
-                        "options": [
-                            {"value": "local", "label": "Local", "description": "上下文相关信息"},
-                            {"value": "global", "label": "Global", "description": "全局知识"},
-                            {"value": "hybrid", "label": "Hybrid", "description": "本地和全局混合"},
-                            {"value": "naive", "label": "Naive", "description": "基本搜索"},
-                            {"value": "mix", "label": "Mix", "description": "知识图谱和向量检索混合"},
-                        ],
-                    },
-                    {
-                        "key": "only_need_context",
-                        "label": "只使用上下文",
-                        "type": "boolean",
-                        "default": True,
-                        "description": "只返回上下文，不生成回答",
-                    },
-                    {
-                        "key": "only_need_prompt",
-                        "label": "只使用提示",
-                        "type": "boolean",
-                        "default": False,
-                        "description": "只返回提示，不进行检索",
-                    },
-                    {
-                        "key": "top_k",
-                        "label": "TopK",
-                        "type": "number",
-                        "default": 10,
-                        "min": 1,
-                        "max": 100,
-                        "description": "返回的最大结果数量",
-                    },
-                ],
-            }
-        elif kb_type == "milvus":
-            top_k_default = reranker_config.get("final_top_k", 10)
-            params_list = [
-                {
-                    "key": "top_k",
-                    "label": "TopK",
-                    "type": "number",
-                    "default": top_k_default,
-                    "min": 1,
-                    "max": 100,
-                    "description": "返回的最大结果数量",
-                },
-                {
-                    "key": "similarity_threshold",
-                    "label": "相似度阈值",
-                    "type": "number",
-                    "default": 0.0,
-                    "min": 0.0,
-                    "max": 1.0,
-                    "step": 0.1,
-                    "description": "过滤相似度低于此值的结果",
-                },
-                {
-                    "key": "include_distances",
-                    "label": "显示相似度",
-                    "type": "boolean",
-                    "default": True,
-                    "description": "在结果中显示相似度分数",
-                },
-                {
-                    "key": "metric_type",
-                    "label": "距离度量类型",
-                    "type": "select",
-                    "default": "COSINE",
-                    "options": [
-                        {"value": "COSINE", "label": "余弦相似度", "description": "适合文本语义相似度"},
-                        {"value": "L2", "label": "欧几里得距离", "description": "适合数值型数据"},
-                        {"value": "IP", "label": "内积", "description": "适合标准化向量"},
-                    ],
-                    "description": "向量相似度计算方法",
-                },
-                {
-                    "key": "use_reranker",
-                    "label": "启用重排序",
-                    "type": "boolean",
-                    "default": reranker_enabled,
-                    "description": "是否使用精排模型对检索结果进行重排序",
-                },
-                {
-                    "key": "recall_top_k",
-                    "label": "召回数量",
-                    "type": "number",
-                    "default": reranker_config.get("recall_top_k", 50),
-                    "min": 10,
-                    "max": 200,
-                    "description": "启用重排序时向量检索的候选数量",
-                },
-            ]
-
-            if config.reranker_names:
-                params_list.append(
-                    {
-                        "key": "reranker_model",
-                        "label": "重排序模型",
-                        "type": "select",
-                        "default": reranker_config.get("model", ""),
-                        "options": [
-                            {"label": info.name, "value": model_id} for model_id, info in config.reranker_names.items()
-                        ],
-                        "description": "覆盖默认配置，选择用于本次查询的重排序模型",
-                    }
-                )
-
-            params = {"type": "milvus", "options": params_list}
-        else:
-            # 未知类型，返回基本参数
-            params = {
-                "type": "unknown",
-                "options": [
-                    {
-                        "key": "top_k",
-                        "label": "TopK",
-                        "type": "number",
-                        "default": 10,
-                        "min": 1,
-                        "max": 100,
-                        "description": "返回的最大结果数量",
-                    }
-                ],
-            }
-
-        # 获取用户保存的配置
-        saved_options = {}
-        try:
-            if db_id in knowledge_base.global_databases_meta:
-                query_params_meta = knowledge_base.global_databases_meta[db_id].get("query_params", {})
-                saved_options = query_params_meta.get("options", {})
-        except Exception as saved_error:
-            logger.warning(f"获取保存的配置失败: {saved_error}")
-
-        # 将保存的值合并到默认配置中
+        # 获取用户保存的配置并合并（从实例 metadata 读取）
+        saved_options = kb_instance._get_query_params(db_id)
         if saved_options:
-            for option in params.get("options", []):
-                key = option.get("key")
-                if key in saved_options:
-                    option["default"] = saved_options[key]
+            params = _merge_saved_options(params, saved_options)
 
         return {"params": params, "message": "success"}
 
     except Exception as e:
         logger.error(f"获取知识库查询参数失败 {e}, {traceback.format_exc()}")
-        return {"message": f"获取知识库查询参数失败 {e}", "params": {}}
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _merge_saved_options(params: dict, saved_options: dict) -> dict:
+    """将用户保存的配置合并到默认配置中"""
+    for option in params.get("options", []):
+        key = option.get("key")
+        if key in saved_options:
+            option["default"] = saved_options[key]
+    return params
 
 
 # =============================================================================
@@ -997,8 +822,9 @@ async def generate_sample_questions(
         生成的问题列表
     """
     try:
-        from src.models import select_model
         import json
+
+        from src.models import select_model
 
         # 从请求体中提取参数
         count = request_body.get("count", 10)

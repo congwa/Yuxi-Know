@@ -104,27 +104,35 @@
       </div>
     </div>
 
-    <div class="batch-actions" v-if="selectedRowKeys.length > 0">
+    <div class="batch-actions" v-if="isSelectionMode">
       <div class="batch-info">
+        <a-checkbox
+          :checked="isAllSelected"
+          :indeterminate="isPartiallySelected"
+          @change="onSelectAllChange"
+          style="margin-right: 8px;"
+        />
         <span>{{ selectedRowKeys.length }} 项</span>
       </div>
-      <div style="display: flex; gap: 4px;">
+      <div style="display: flex; gap: 8px;">
         <a-button
           type="link"
           @click="handleBatchParse"
           :loading="batchParsing"
           :disabled="!canBatchParse"
           :icon="h(FileText, { size: 16 })"
-          title="批量解析"
-        />
+        >
+          批量解析
+        </a-button>
         <a-button
           type="link"
           @click="handleBatchIndex"
           :loading="batchIndexing"
           :disabled="!canBatchIndex"
           :icon="h(Database, { size: 16 })"
-          title="批量入库"
-        />
+        >
+          批量入库
+        </a-button>
         <a-button
           type="link"
           danger
@@ -132,8 +140,9 @@
           :loading="batchDeleting"
           :disabled="!canBatchDelete"
           :icon="h(Trash2, { size: 16 })"
-          title="批量删除"
-        />
+        >
+          批量删除
+        </a-button>
       </div>
     </div>
 
@@ -177,7 +186,7 @@
         class="my-table"
         size="small"
         :show-header="false"
-        :pagination="paginationCompact"
+        :pagination="false"
         v-model:expandedRowKeys="expandedRowKeys"
         :custom-row="customRow"
         :row-selection="isSelectionMode ? {
@@ -196,7 +205,7 @@
               {{ record.filename }}
             </span>
           </template>
-          <a-popover v-else placement="right" overlayClassName="file-info-popover" :mouseEnterDelay="1">
+          <a-popover v-else placement="right" overlayClassName="file-info-popover" :mouseEnterDelay="0.5">
             <template #content>
               <div class="file-info-card">
                  <div class="info-row"><span class="label">ID:</span> <span class="value">{{ record.file_id }}</span></div>
@@ -382,6 +391,46 @@ const selectedRowKeys = computed({
 });
 
 const isSelectionMode = ref(false);
+
+const allSelectableFiles = computed(() => {
+  const nameFilter = filenameFilter.value.trim().toLowerCase();
+  const status = statusFilter.value;
+
+  return files.value.filter(file => {
+    if (file.is_folder) return false;
+    // Follow getCheckboxProps logic
+    if (lock.value || file.status === 'processing' || file.status === 'waiting') return false;
+
+    if (nameFilter || status) {
+      const nameMatch = !nameFilter || (file.filename && file.filename.toLowerCase().includes(nameFilter));
+      const statusMatch = !status || file.status === status ||
+                          (status === 'indexed' && file.status === 'done') ||
+                          (status === 'error_indexing' && file.status === 'failed');
+      return nameMatch && statusMatch;
+    }
+    return true;
+  });
+});
+
+const isAllSelected = computed(() => {
+  const selectableIds = allSelectableFiles.value.map(f => f.file_id);
+  if (selectableIds.length === 0) return false;
+  return selectableIds.every(id => selectedRowKeys.value.includes(id));
+});
+
+const isPartiallySelected = computed(() => {
+  const selectableIds = allSelectableFiles.value.map(f => f.file_id);
+  const selectedCount = selectableIds.filter(id => selectedRowKeys.value.includes(id)).length;
+  return selectedCount > 0 && selectedCount < selectableIds.length;
+});
+
+const onSelectAllChange = (e) => {
+  if (e.target.checked) {
+    selectedRowKeys.value = allSelectableFiles.value.map(f => f.file_id);
+  } else {
+    selectedRowKeys.value = [];
+  }
+};
 
 const expandedRowKeys = ref([]);
 
@@ -721,27 +770,6 @@ const emptyText = computed(() => {
   return filenameFilter.value ? `没有找到包含"${filenameFilter.value}"的文件` : '暂无文件';
 });
 
-// 紧凑分页配置
-const paginationCompact = ref({
-  pageSize: 20,
-  current: 1,
-  total: 0,
-  showSizeChanger: false,
-  showTotal: (total) => `${total}`,
-  size: 'small',
-  showQuickJumper: false,
-  onChange: (page, pageSize) => {
-    paginationCompact.value.current = page;
-    paginationCompact.value.pageSize = pageSize;
-    selectedRowKeys.value = [];
-  },
-});
-
-// 监听过滤后的文件列表变化，更新分页总数
-watch(filteredFiles, (newFiles) => {
-  paginationCompact.value.total = newFiles.length;
-}, { immediate: true });
-
 // 计算是否可以批量删除
 const canBatchDelete = computed(() => {
   return selectedRowKeys.value.some(key => {
@@ -1057,7 +1085,7 @@ import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue';
 .panel-actions {
   display: flex;
   align-items: center;
-  gap: 0px;
+  gap: 4px;
 
   .action-searcher {
     width: 120px;
@@ -1072,7 +1100,7 @@ import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue';
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 2px 12px;
+  padding: 4px 12px;
   background-color: var(--main-10);
   border-radius: 4px;
   margin-bottom: 4px;
@@ -1093,9 +1121,12 @@ import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue';
 
 .batch-actions .ant-btn {
   font-size: 12px;
-  padding: 0 6px;
-  height: 22px;
-  border-radius: 3px;
+  padding: 4px 8px;
+  height: auto;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 
   svg {
     width: 14px;
@@ -1193,8 +1224,7 @@ import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue';
   align-items: center;
   justify-content: center;
   border-radius: 6px;
-  /* border: 1px solid var(--gray-300); */
-  /* background-color: var(--gray-50); */
+  padding: 0 4px;
   color: var(--gray-700);
   transition: all 0.1s ease;
   font-size: 12px;
@@ -1226,7 +1256,8 @@ import ChunkParamsConfig from '@/components/ChunkParamsConfig.vue';
 
 .panel-action-btn.active {
   color: var(--main-color);
-  background-color: var(--main-10);
+  background-color: var(--gray-100);
+  font-weight: 600;
 }
 
 .action-trigger-btn {

@@ -418,7 +418,7 @@ class LightRagKB(KnowledgeBase):
 
         return processed_items_info
 
-    async def aquery(self, query_text: str, db_id: str, **kwargs) -> str:
+    async def aquery(self, query_text: str, db_id: str, agent_call: bool = False, **kwargs) -> str:
         """异步查询知识库"""
         rag = await self._get_lightrag_instance(db_id)
         if not rag:
@@ -448,7 +448,9 @@ class LightRagKB(KnowledgeBase):
             }
 
             # 过滤 kwargs，只保留 QueryParam 支持的参数
-            filtered_kwargs = {k: v for k, v in kwargs.items() if k in valid_params}
+            query_params = self._get_query_params(db_id)
+            query_params = query_params | kwargs
+            filtered_kwargs = {k: v for k, v in query_params.items() if k in valid_params}
 
             # 设置查询参数
             params_dict = {
@@ -459,8 +461,11 @@ class LightRagKB(KnowledgeBase):
             param = QueryParam(**params_dict)
 
             # 执行查询
-            response = await rag.aquery(query_text, param)
-            logger.debug(f"Query response: {response}")
+            response = await rag.aquery_data(query_text, param)
+            logger.debug(f"Query response: {str(response)[:1000]}...")
+
+            if agent_call:
+                return response["data"]["chunks"]
 
             return response
 
@@ -552,6 +557,49 @@ class LightRagKB(KnowledgeBase):
         content_info = await self.get_file_content(db_id, file_id)
 
         return {**basic_info, **content_info}
+
+    def get_query_params_config(self, db_id: str, **kwargs) -> dict:
+        """获取 LightRAG 知识库的查询参数配置"""
+        options = [
+            {
+                "key": "mode",
+                "label": "检索模式",
+                "type": "select",
+                "default": "mix",
+                "options": [
+                    {"value": "local", "label": "Local", "description": "上下文相关信息"},
+                    {"value": "global", "label": "Global", "description": "全局知识"},
+                    {"value": "hybrid", "label": "Hybrid", "description": "本地和全局混合"},
+                    {"value": "naive", "label": "Naive", "description": "基本搜索"},
+                    {"value": "mix", "label": "Mix", "description": "知识图谱和向量检索混合"},
+                ],
+            },
+            {
+                "key": "only_need_context",
+                "label": "只使用上下文",
+                "type": "boolean",
+                "default": True,
+                "description": "只返回上下文，不生成回答",
+            },
+            {
+                "key": "only_need_prompt",
+                "label": "只使用提示",
+                "type": "boolean",
+                "default": False,
+                "description": "只返回提示，不进行检索",
+            },
+            {
+                "key": "top_k",
+                "label": "TopK",
+                "type": "number",
+                "default": 10,
+                "min": 1,
+                "max": 100,
+                "description": "返回的最大结果数量",
+            },
+        ]
+
+        return {"type": "lightrag", "options": options}
 
     async def export_data(self, db_id: str, format: str = "csv", **kwargs) -> str:
         """

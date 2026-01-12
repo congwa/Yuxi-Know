@@ -458,31 +458,32 @@ class MilvusKB(KnowledgeBase):
 
         return processed_items_info
 
-    async def aquery(self, query_text: str, db_id: str, **kwargs) -> list[dict]:
+    async def aquery(self, query_text: str, db_id: str, agent_call: bool = False, **kwargs) -> list[dict]:
         """异步查询知识库"""
         collection = await self._get_milvus_collection(db_id)
         if not collection:
             raise ValueError(f"Database {db_id} not found")
 
+        query_params = self._get_query_params(db_id)
+        # 合并查询参数：kwargs（临时参数）优先级高于 query_params（持久化参数）
+        # 这样允许用户在单次查询中临时覆盖持久化配置
+        merged_kwargs = {**query_params, **kwargs}
+
         try:
-            db_meta = self.databases_meta.get(db_id, {})
-            db_metadata = db_meta.get("metadata", {}) or {}
-            reranker_config = db_metadata.get("reranker_config", {}) or {}
+            # 查询参数（从 merged_kwargs 读取）
+            logger.debug(f"Query params: {merged_kwargs}")
+            final_top_k = int(merged_kwargs.get("final_top_k", 10))
+            final_top_k = max(final_top_k, 1)
+            similarity_threshold = float(merged_kwargs.get("similarity_threshold", 0.2))
+            metric_type = merged_kwargs.get("metric_type", "COSINE")
+            include_distances = bool(merged_kwargs.get("include_distances", True))
 
-            requested_top_k = int(kwargs.get("top_k", reranker_config.get("final_top_k", 30)))
-            requested_top_k = max(requested_top_k, 1)
-            similarity_threshold = float(kwargs.get("similarity_threshold", 0.2))
-            metric_type = kwargs.get("metric_type", "COSINE")
-            include_distances = bool(kwargs.get("include_distances", True))
-
-            use_reranker = bool(kwargs.get("use_reranker", reranker_config.get("enabled", False)))
+            use_reranker = bool(merged_kwargs.get("use_reranker", False))
             if use_reranker:
-                recall_top_k = int(kwargs.get("recall_top_k", reranker_config.get("recall_top_k", 50)))
-                recall_top_k = max(recall_top_k, requested_top_k)
-                final_top_k = requested_top_k
+                recall_top_k = int(merged_kwargs.get("recall_top_k", 50))
+                recall_top_k = max(recall_top_k, final_top_k)
             else:
-                recall_top_k = requested_top_k
-                final_top_k = requested_top_k
+                recall_top_k = final_top_k
 
             embed_info = self.databases_meta[db_id].get("embed_info", {})
             embedding_function = self._get_embedding_function(embed_info)
@@ -492,7 +493,7 @@ class MilvusKB(KnowledgeBase):
 
             # 构建过滤表达式
             expr = None
-            if file_name := kwargs.get("file_name"):
+            if file_name := merged_kwargs.get("file_name"):
                 # 使用 like 支持模糊匹配
                 # 注意：需要转义双引号以防止注入
                 safe_file_name = file_name.replace('"', '\\"')
@@ -537,35 +538,41 @@ class MilvusKB(KnowledgeBase):
 
             logger.debug(f"Milvus query response: {len(retrieved_chunks)} chunks found (after similarity filtering)")
 
-            if use_reranker and retrieved_chunks:
+            if not use_reranker:
+                return retrieved_chunks[:final_top_k]
+
+            # 使用重排序模型
+            reranker_model = merged_kwargs.get("reranker_model")
+            if not reranker_model:
+                raise ValueError(
+                    "Reranker model must be specified when use_reranker=True. "
+                    "Please provide reranker_model in query parameters."
+                )
+
+            try:
+                from src.models.rerank import get_reranker
+
+                reranker = get_reranker(reranker_model)
                 try:
-                    reranker_model = kwargs.get("reranker_model", reranker_config.get("model"))
-                    if not reranker_model:
-                        logger.warning("Reranker enabled but no model specified, skipping reranking")
-                    else:
-                        from src.models.rerank import get_reranker
+                    rerank_start = time.time()
+                    documents_text = [chunk["content"] for chunk in retrieved_chunks]
+                    rerank_scores = await reranker.acompute_score([query_text, documents_text], normalize=True)
 
-                        reranker = get_reranker(reranker_model)
-                        try:
-                            rerank_start = time.time()
-                            documents_text = [chunk["content"] for chunk in retrieved_chunks]
-                            rerank_scores = await reranker.acompute_score([query_text, documents_text], normalize=True)
+                    for chunk, rerank_score in zip(retrieved_chunks, rerank_scores):
+                        chunk["rerank_score"] = float(rerank_score)
 
-                            for chunk, rerank_score in zip(retrieved_chunks, rerank_scores):
-                                chunk["rerank_score"] = float(rerank_score)
+                    retrieved_chunks.sort(
+                        key=lambda item: item.get("rerank_score", item.get("score", 0.0)), reverse=True
+                    )
+                    elapsed = time.time() - rerank_start
+                    logger.info(f"Reranking completed for {db_id} in {elapsed:.3f}s with model {reranker_model}")
+                finally:
+                    await reranker.aclose()
 
-                            retrieved_chunks.sort(
-                                key=lambda item: item.get("rerank_score", item.get("score", 0.0)), reverse=True
-                            )
-                            elapsed = time.time() - rerank_start
-                            logger.info(
-                                f"Reranking completed for {db_id} in {elapsed:.3f}s with model {reranker_model}"
-                            )
-                        finally:
-                            await reranker.aclose()
-                except Exception as exc:  # noqa: BLE001
-                    logger.error(f"Reranking failed: {exc}, falling back to vector scores")
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"Reranking failed: {exc}, falling back to vector scores")
 
+            # 统一返回结果
             return retrieved_chunks[:final_top_k]
 
         except Exception as e:
@@ -688,6 +695,82 @@ class MilvusKB(KnowledgeBase):
 
         # Call base method to delete local files and metadata
         return super().delete_database(db_id)
+
+    def get_query_params_config(self, db_id: str, **kwargs) -> dict:
+        """获取 Milvus 知识库的查询参数配置"""
+        # 构建 Milvus 特定参数（不再从 reranker_config 读取）
+        options = [
+            {
+                "key": "final_top_k",
+                "label": "最终返回数",
+                "type": "number",
+                "default": 10,
+                "min": 1,
+                "max": 100,
+                "description": "重排序后返回给前端的文档数量",
+            },
+            {
+                "key": "similarity_threshold",
+                "label": "相似度阈值",
+                "type": "number",
+                "default": 0.0,
+                "min": 0.0,
+                "max": 1.0,
+                "step": 0.1,
+                "description": "过滤相似度低于此值的结果",
+            },
+            {
+                "key": "include_distances",
+                "label": "显示相似度",
+                "type": "boolean",
+                "default": True,
+                "description": "在结果中显示相似度分数",
+            },
+            {
+                "key": "metric_type",
+                "label": "距离度量类型",
+                "type": "select",
+                "default": "COSINE",
+                "options": [
+                    {"value": "COSINE", "label": "余弦相似度", "description": "适合文本语义相似度"},
+                    {"value": "L2", "label": "欧几里得距离", "description": "适合数值型数据"},
+                    {"value": "IP", "label": "内积", "description": "适合标准化向量"},
+                ],
+                "description": "向量相似度计算方法",
+            },
+            {
+                "key": "use_reranker",
+                "label": "启用重排序",
+                "type": "boolean",
+                "default": False,
+                "description": "是否使用精排模型对检索结果进行重排序",
+            },
+            {
+                "key": "recall_top_k",
+                "label": "召回数量",
+                "type": "number",
+                "default": 50,
+                "min": 10,
+                "max": 200,
+                "description": "向量检索时保留的候选数量（启用重排序时有效）",
+            },
+        ]
+
+        # 动态添加 reranker 模型选择
+        reranker_names = kwargs.get("reranker_names", {})
+        if reranker_names:
+            options.append(
+                {
+                    "key": "reranker_model",
+                    "label": "重排序模型",
+                    "type": "select",
+                    "default": "",
+                    "options": [{"label": info.name, "value": model_id} for model_id, info in reranker_names.items()],
+                    "description": "选择用于本次查询的重排序模型",
+                }
+            )
+
+        return {"type": "milvus", "options": options}
 
     def __del__(self):
         """清理连接"""
