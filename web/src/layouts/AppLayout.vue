@@ -1,9 +1,8 @@
 <script setup>
-import { ref, reactive, onMounted, useTemplateRef, computed, provide } from 'vue'
+import { ref, reactive, onMounted, computed, provide } from 'vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import { GithubOutlined } from '@ant-design/icons-vue'
-import { Bot, Waypoints, LibraryBig, BarChart3, CircleCheck } from 'lucide-vue-next';
-import { onLongPress } from '@vueuse/core'
+import { Bot, Waypoints, LibraryBig, BarChart3, CircleCheck } from 'lucide-vue-next'
 
 import { useConfigStore } from '@/stores/config'
 import { useDatabaseStore } from '@/stores/database'
@@ -23,7 +22,7 @@ const { activeCount: activeCountRef, isDrawerOpen } = storeToRefs(taskerStore)
 
 const layoutSettings = reactive({
   showDebug: false,
-  useTopBar: false, // 是否使用顶栏
+  useTopBar: false // 是否使用顶栏
 })
 
 // Add state for GitHub stars
@@ -32,7 +31,6 @@ const isLoadingStars = ref(false)
 
 // Add state for debug modal
 const showDebugModal = ref(false)
-const htmlRefHook = useTemplateRef('htmlRefHook')
 
 // Add state for settings modal
 const showSettingsModal = ref(false)
@@ -41,21 +39,6 @@ const showSettingsModal = ref(false)
 const openSettingsModal = () => {
   showSettingsModal.value = true
 }
-
-// Setup long press for debug modal
-onLongPress(
-  htmlRefHook,
-  () => {
-    console.log('long press')
-    showDebugModal.value = true
-  },
-  {
-    delay: 1000, // 1秒长按
-    modifiers: {
-      prevent: true
-    }
-  }
-)
 
 // Handle debug modal close
 const handleDebugModalClose = () => {
@@ -103,26 +86,30 @@ console.log(route)
 const activeTaskCount = computed(() => activeCountRef.value || 0)
 
 // 下面是导航菜单部分，添加智能体项
-const mainList = [{
+const mainList = [
+  {
     name: '智能体',
     path: '/agent',
     icon: Bot,
-    activeIcon: Bot,
-  }, {
+    activeIcon: Bot
+  },
+  {
     name: '图谱',
     path: '/graph',
     icon: Waypoints,
-    activeIcon: Waypoints,
-  }, {
+    activeIcon: Waypoints
+  },
+  {
     name: '知识库',
     path: '/database',
     icon: LibraryBig,
-    activeIcon: LibraryBig,
-  }, {
+    activeIcon: LibraryBig
+  },
+  {
     name: 'Dashboard',
     path: '/dashboard',
     icon: BarChart3,
-    activeIcon: BarChart3,
+    activeIcon: BarChart3
   }
 ]
 
@@ -137,7 +124,7 @@ provide('settingsModal', {
     <div class="header" :class="{ 'top-bar': layoutSettings.useTopBar }">
       <div class="logo circle">
         <router-link to="/">
-          <img :src="infoStore.organization.avatar">
+          <img :src="infoStore.organization.avatar" />
         </router-link>
       </div>
       <div class="nav">
@@ -148,10 +135,15 @@ provide('settingsModal', {
           :to="item.path"
           v-show="!item.hidden"
           class="nav-item"
-          active-class="active">
+          active-class="active"
+        >
           <a-tooltip placement="right">
             <template #title>{{ item.name }}</template>
-            <component class="icon" :is="route.path.startsWith(item.path) ? item.activeIcon : item.icon" size="22"/>
+            <component
+              class="icon"
+              :is="route.path.startsWith(item.path) ? item.activeIcon : item.icon"
+              size="22"
+            />
           </a-tooltip>
         </RouterLink>
         <div
@@ -172,10 +164,7 @@ provide('settingsModal', {
           </a-tooltip>
         </div>
       </div>
-      <div
-        ref="htmlRefHook"
-        class="fill debug-trigger"
-      ></div>
+      <div class="fill"></div>
       <div class="github nav-item">
         <a-tooltip placement="right">
           <template #title>欢迎 Star</template>
@@ -191,10 +180,6 @@ provide('settingsModal', {
       <div class="nav-item user-info">
         <UserInfoComponent />
       </div>
-    </div>
-    <div class="header-mobile">
-      <RouterLink to="/agent" class="nav-item" active-class="active">对话</RouterLink>
-      <RouterLink to="/database" class="nav-item" active-class="active">知识</RouterLink>
     </div>
     <router-view v-slot="{ Component, route }" id="app-router-view">
       <keep-alive v-if="route.meta.keepAlive !== false">
@@ -217,10 +202,7 @@ provide('settingsModal', {
       <DebugComponent />
     </a-modal>
     <TaskCenterDrawer />
-    <SettingsModal
-      v-model:visible="showSettingsModal"
-      @close="() => showSettingsModal = false"
-    />
+    <SettingsModal v-model:visible="showSettingsModal" @close="() => (showSettingsModal = false)" />
   </div>
 </template>
 
@@ -234,22 +216,10 @@ provide('settingsModal', {
   width: 100%;
   height: 100vh;
   min-width: var(--min-width);
-
-  .header-mobile {
-    display: none;
-  }
-
-  .debug-panel {
-    position: absolute;
-    z-index: 100;
-    right: 0;
-    bottom: 50px;
-    border-radius: 20px 0 0 20px;
-    cursor: pointer;
-  }
 }
 
-div.header, #app-router-view {
+div.header,
+#app-router-view {
   height: 100%;
   max-width: 100%;
   user-select: none;
@@ -281,24 +251,19 @@ div.header, #app-router-view {
     gap: 16px;
   }
 
-  // 添加debug触发器样式
-  .debug-trigger {
-    position: relative;
-    height: 100%;
-    width: 100%;
-    min-height: 20px;
+  .fill {
     flex-grow: 1;
   }
 
   .logo {
     width: 34px;
     height: 34px;
-    margin: 12px 0 20px 0;
+    margin: 6px 0 20px 0;
 
     img {
       width: 100%;
       height: 100%;
-      border-radius: 4px;  // 50% for circle
+      border-radius: 4px; // 50% for circle
     }
 
     & > a {
@@ -321,7 +286,9 @@ div.header, #app-router-view {
     background-color: transparent;
     color: var(--gray-1000);
     font-size: 20px;
-    transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
+    transition:
+      background-color 0.2s ease-in-out,
+      color 0.2s ease-in-out;
     margin: 0;
     text-decoration: none;
     cursor: pointer;
@@ -384,7 +351,9 @@ div.header, #app-router-view {
     &.api-docs {
       padding: 10px 12px;
     }
-    &.docs { display: none; }
+    &.docs {
+      display: none;
+    }
     &.task-center {
       .task-center-badge {
         width: 100%;
@@ -412,51 +381,6 @@ div.header, #app-router-view {
     &.user-info {
       margin-bottom: 8px;
     }
-  }
-
-}
-
-
-@media (max-width: 520px) {
-  .app-layout {
-    flex-direction: column-reverse;
-
-    div.header {
-      display: none;
-    }
-
-    .debug-panel {
-      bottom: 10rem;
-    }
-
-  }
-  .app-layout div.header-mobile {
-    display: flex;
-    flex-direction: row;
-    width: 100%;
-    padding: 0 20px;
-    justify-content: space-around;
-    align-items: center;
-    flex: 0 0 60px;
-    border-right: none;
-    height: 40px;
-
-    .nav-item {
-      text-decoration: none;
-      width: 40px;
-      color: var(--gray-900);
-      font-size: 1rem;
-      font-weight: bold;
-      transition: color 0.1s ease-in-out, font-size 0.1s ease-in-out;
-
-      &.active {
-        color: var(--gray-10000);
-        font-size: 1.1rem;
-      }
-    }
-  }
-  .app-layout .chat-box::webkit-scrollbar {
-    width: 0;
   }
 }
 
@@ -494,7 +418,6 @@ div.header, #app-router-view {
       height: 28px;
       margin-right: 8px;
     }
-
   }
 
   .nav {
@@ -515,7 +438,8 @@ div.header, #app-router-view {
       border: none;
       outline: none;
 
-      &:focus, &:active {
+      &:focus,
+      &:active {
         border: none;
         outline: none;
       }

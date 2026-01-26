@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from src.storage.db.models import User
-from server.services.tasker import tasker
+from src.storage.postgres.models_business import User
+from src.services.task_service import tasker
 from server.utils.auth_middleware import get_admin_user
 
 tasks = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -33,3 +33,12 @@ async def cancel_task(task_id: str, current_user: User = Depends(get_admin_user)
     if not success:
         raise HTTPException(status_code=400, detail="Task cannot be cancelled")
     return {"task_id": task_id, "status": "cancelled"}
+
+
+@tasks.delete("/{task_id}")
+async def delete_task(task_id: str, current_user: User = Depends(get_admin_user)):
+    """Delete a task by id."""
+    success = await tasker.delete_task(task_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"task_id": task_id, "status": "deleted"}

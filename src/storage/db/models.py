@@ -4,12 +4,34 @@ from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
-from src.utils.datetime_utils import coerce_datetime, utc_isoformat, utc_now
+from src.utils.datetime_utils import coerce_datetime, format_utc_datetime, utc_now
 
 Base = declarative_base()
 
 
 ## Removed legacy RDBMS knowledge models (KnowledgeDatabase/KnowledgeFile/KnowledgeNode)
+
+
+class Department(Base):
+    """部门模型"""
+
+    __tablename__ = "departments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(50), nullable=False, unique=True, index=True)
+    description = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=utc_now)
+
+    # 关联关系
+    users = relationship("User", back_populates="department")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "created_at": format_utc_datetime(self.created_at),
+        }
 
 
 class Conversation(Base):
@@ -34,13 +56,6 @@ class Conversation(Base):
     )
 
     def to_dict(self):
-        def format_utc_datetime(dt_value):
-            if dt_value is None:
-                return None
-            if dt_value.tzinfo is None:
-                dt_value = dt_value.replace(tzinfo=dt.UTC)
-            return utc_isoformat(dt_value)
-
         return {
             "id": self.id,
             "thread_id": self.thread_id,
@@ -76,13 +91,6 @@ class Message(Base):
     tool_calls = relationship("ToolCall", back_populates="message", cascade="all, delete-orphan")
 
     def to_dict(self):
-        def format_utc_datetime(dt_value):
-            if dt_value is None:
-                return None
-            if dt_value.tzinfo is None:
-                dt_value = dt_value.replace(tzinfo=dt.UTC)
-            return utc_isoformat(dt_value)
-
         return {
             "id": self.id,
             "conversation_id": self.conversation_id,
@@ -124,13 +132,6 @@ class ToolCall(Base):
     message = relationship("Message", back_populates="tool_calls")
 
     def to_dict(self):
-        def format_utc_datetime(dt_value):
-            if dt_value is None:
-                return None
-            if dt_value.tzinfo is None:
-                dt_value = dt_value.replace(tzinfo=dt.UTC)
-            return utc_isoformat(dt_value)
-
         return {
             "id": self.id,
             "message_id": self.message_id,
@@ -164,13 +165,6 @@ class ConversationStats(Base):
     conversation = relationship("Conversation", back_populates="stats")
 
     def to_dict(self):
-        def format_utc_datetime(dt_value):
-            if dt_value is None:
-                return None
-            if dt_value.tzinfo is None:
-                dt_value = dt_value.replace(tzinfo=dt.UTC)
-            return utc_isoformat(dt_value)
-
         return {
             "id": self.id,
             "conversation_id": self.conversation_id,
@@ -195,6 +189,7 @@ class User(Base):
     avatar = Column(String, nullable=True)  # 头像URL
     password_hash = Column(String, nullable=False)
     role = Column(String, nullable=False, default="user")  # 角色: superadmin, admin, user
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)  # 部门ID
     created_at = Column(DateTime, default=utc_now)
     last_login = Column(DateTime, nullable=True)
 
@@ -210,16 +205,11 @@ class User(Base):
     # 关联操作日志
     operation_logs = relationship("OperationLog", back_populates="user", cascade="all, delete-orphan")
 
+    # 关联部门
+    department = relationship("Department", back_populates="users")
+
     def to_dict(self, include_password=False):
         # SQLite 存储 naive datetime，需要标记为 UTC 后再转换
-        def format_utc_datetime(dt_value):
-            if dt_value is None:
-                return None
-            # 如果是 naive datetime，假设它是 UTC（因为代码中使用 utc_now() 存储）
-            if dt_value.tzinfo is None:
-                dt_value = dt_value.replace(tzinfo=dt.UTC)
-            return utc_isoformat(dt_value)
-
         result = {
             "id": self.id,
             "username": self.username,
@@ -227,6 +217,7 @@ class User(Base):
             "phone_number": self.phone_number,
             "avatar": self.avatar,
             "role": self.role,
+            "department_id": self.department_id,
             "created_at": format_utc_datetime(self.created_at),
             "last_login": format_utc_datetime(self.last_login),
             "login_failed_count": self.login_failed_count,
@@ -298,13 +289,6 @@ class OperationLog(Base):
     user = relationship("User", back_populates="operation_logs")
 
     def to_dict(self):
-        def format_utc_datetime(dt_value):
-            if dt_value is None:
-                return None
-            if dt_value.tzinfo is None:
-                dt_value = dt_value.replace(tzinfo=dt.UTC)
-            return utc_isoformat(dt_value)
-
         return {
             "id": self.id,
             "user_id": self.user_id,
@@ -333,13 +317,6 @@ class MessageFeedback(Base):
     message = relationship("Message", backref="feedbacks")
 
     def to_dict(self):
-        def format_utc_datetime(dt_value):
-            if dt_value is None:
-                return None
-            if dt_value.tzinfo is None:
-                dt_value = dt_value.replace(tzinfo=dt.UTC)
-            return utc_isoformat(dt_value)
-
         return {
             "id": self.id,
             "message_id": self.message_id,
@@ -348,3 +325,96 @@ class MessageFeedback(Base):
             "reason": self.reason,
             "created_at": format_utc_datetime(self.created_at),
         }
+
+
+class MCPServer(Base):
+    """MCP 服务器配置模型"""
+
+    __tablename__ = "mcp_servers"
+
+    # 核心字段 - name 作为主键
+    name = Column(String(100), primary_key=True, comment="服务器名称（唯一标识）")
+    description = Column(String(500), nullable=True, comment="描述")
+
+    # 连接配置
+    transport = Column(String(20), nullable=False, comment="传输类型：sse/streamable_http/stdio")
+    url = Column(String(500), nullable=True, comment="服务器 URL（sse/streamable_http）")
+    command = Column(String(500), nullable=True, comment="命令（stdio）")
+    args = Column(JSON, nullable=True, comment="命令参数数组（stdio）")
+    headers = Column(JSON, nullable=True, comment="HTTP 请求头")
+    timeout = Column(Integer, nullable=True, comment="HTTP 超时时间（秒）")
+    sse_read_timeout = Column(Integer, nullable=True, comment="SSE 读取超时（秒）")
+
+    # UI 增强字段
+    tags = Column(JSON, nullable=True, comment="标签数组")
+    icon = Column(String(50), nullable=True, comment="图标（emoji）")
+
+    # 状态字段
+    enabled = Column(Integer, nullable=False, default=1, comment="是否启用：1=是，0=否")
+    disabled_tools = Column(JSON, nullable=True, comment="禁用的工具名称列表")
+
+    # 用户追踪
+    created_by = Column(String(100), nullable=False, comment="创建人用户名")
+    updated_by = Column(String(100), nullable=False, comment="修改人用户名")
+
+    # 时间戳
+    created_at = Column(DateTime, default=utc_now, comment="创建时间")
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, comment="更新时间")
+
+    def to_dict(self):
+        return {
+            "name": self.name,
+            "description": self.description,
+            "transport": self.transport,
+            "url": self.url,
+            "command": self.command,
+            "args": self.args or [],
+            "headers": self.headers or {},
+            "timeout": self.timeout,
+            "sse_read_timeout": self.sse_read_timeout,
+            "tags": self.tags or [],
+            "icon": self.icon,
+            "enabled": bool(self.enabled),
+            "disabled_tools": self.disabled_tools or [],
+            "created_by": self.created_by,
+            "updated_by": self.updated_by,
+            "created_at": format_utc_datetime(self.created_at),
+            "updated_at": format_utc_datetime(self.updated_at),
+        }
+
+    def to_mcp_config(self) -> dict:
+        """转换为 MCP 配置格式（用于加载到 MCP_SERVERS 缓存）"""
+        import json
+
+        config = {
+            "transport": self.transport,
+        }
+        if self.url:
+            config["url"] = self.url
+        if self.command:
+            config["command"] = self.command
+        # args 只用于 stdio 传输类型，必须是列表
+        if self.transport == "stdio" and self.args:
+            if isinstance(self.args, list):
+                config["args"] = self.args
+            elif isinstance(self.args, str):
+                try:
+                    config["args"] = json.loads(self.args)
+                except json.JSONDecodeError:
+                    pass
+        # headers 只用于 sse/streamable_http 传输类型
+        if self.transport in ("sse", "streamable_http") and self.headers:
+            if isinstance(self.headers, dict):
+                config["headers"] = self.headers
+            elif isinstance(self.headers, str):
+                try:
+                    config["headers"] = json.loads(self.headers)
+                except json.JSONDecodeError:
+                    pass
+        if self.timeout is not None:
+            config["timeout"] = self.timeout
+        if self.sse_read_timeout is not None:
+            config["sse_read_timeout"] = self.sse_read_timeout
+        if self.disabled_tools:
+            config["disabled_tools"] = self.disabled_tools
+        return config

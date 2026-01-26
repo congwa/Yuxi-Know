@@ -16,7 +16,7 @@
               v-for="agent in agents"
               :key="agent.id"
               class="agent-card"
-              :class="{ 'selected': agent.id === selectedAgentId }"
+              :class="{ selected: agent.id === selectedAgentId }"
               @click="selectAgentFromModal(agent.id)"
             >
               <div class="agent-card-header">
@@ -24,7 +24,11 @@
                   <span class="agent-card-name">{{ agent.name || 'Unknown' }}</span>
                 </div>
                 <StarFilled v-if="agent.id === defaultAgentId" class="default-icon" />
-                <StarOutlined v-else @click.prevent="setAsDefaultAgent(agent.id)" class="default-icon" />
+                <StarOutlined
+                  v-else
+                  @click.prevent="setAsDefaultAgent(agent.id)"
+                  class="default-icon"
+                />
               </div>
 
               <div class="agent-card-description">
@@ -35,6 +39,17 @@
         </div>
       </a-modal>
 
+      <a-modal
+        v-model:open="createConfigModalOpen"
+        title="新建配置"
+        :width="320"
+        :confirmLoading="createConfigLoading"
+        @ok="handleCreateConfig"
+        @cancel="() => (createConfigModalOpen = false)"
+      >
+        <a-input v-model:value="createConfigName" placeholder="请输入配置名称" allow-clear />
+      </a-modal>
+
       <!-- 中间内容区域 -->
       <div class="content">
         <AgentChatComponent
@@ -42,15 +57,69 @@
           :single-mode="false"
           @open-config="toggleConf"
           @open-agent-modal="openAgentModal"
-          @close-config-sidebar="() => chatUIStore.isConfigSidebarOpen = false"
+          @close-config-sidebar="() => (chatUIStore.isConfigSidebarOpen = false)"
         >
-          <template #header-right="{ isMediumContainer }">
-            <div type="button" class="agent-nav-btn" @click="toggleConf">
-              <Settings2 size="18" class="nav-btn-icon"/>
-              <span class="text" :class="{ 'hide-text': isMediumContainer }">配置</span>
-            </div>
-            <div v-if="selectedAgentId" ref="moreButtonRef" type="button" class="agent-nav-btn" @click="toggleMoreMenu">
-              <Ellipsis size="18"  class="nav-btn-icon"/>
+          <template #header-right>
+            <a-dropdown v-if="selectedAgentId" :trigger="['click']">
+              <div type="button" class="agent-nav-btn">
+                <Settings2 size="18" class="nav-btn-icon" />
+                <span class="text hide-text">
+                  {{ selectedConfigSummary?.name || '配置' }}
+                </span>
+                <ChevronDown size="16" class="nav-btn-icon" />
+              </div>
+              <template #overlay>
+                <a-menu
+                  :selectedKeys="selectedAgentConfigId ? [String(selectedAgentConfigId)] : []"
+                >
+                  <a-menu-item
+                    v-for="cfg in agentConfigs[selectedAgentId] || []"
+                    :key="String(cfg.id)"
+                    @click="selectAgentConfig(cfg.id)"
+                  >
+                    <div class="menu-item-full">
+                      <Star
+                        :size="14"
+                        :fill="cfg.is_default ? 'currentColor' : 'none'"
+                        :style="{
+                          color: cfg.is_default ? 'var(--color-warning-500)' : 'var(--gray-400)'
+                        }"
+                      />
+                      <span>{{ cfg.name }}</span>
+                    </div>
+                  </a-menu-item>
+                  <a-menu-divider v-if="userStore.isAdmin" />
+                  <a-menu-item
+                    v-if="userStore.isAdmin"
+                    key="create_config"
+                    @click="openCreateConfigModal"
+                  >
+                    <div class="menu-item-layout">
+                      <Plus :size="16" />
+                      <span>新建配置</span>
+                    </div>
+                  </a-menu-item>
+                  <a-menu-item
+                    v-if="userStore.isAdmin"
+                    key="open_config"
+                    @click="openConfigSidebar"
+                  >
+                    <div class="menu-item-layout">
+                      <SquarePen :size="16" />
+                      <span>编辑当前配置</span>
+                    </div>
+                  </a-menu-item>
+                </a-menu>
+              </template>
+            </a-dropdown>
+            <div
+              v-if="selectedAgentId"
+              ref="moreButtonRef"
+              type="button"
+              class="agent-nav-btn"
+              @click="toggleMoreMenu"
+            >
+              <Ellipsis size="18" class="nav-btn-icon" />
             </div>
           </template>
         </AgentChatComponent>
@@ -59,7 +128,7 @@
       <!-- 配置侧边栏 -->
       <AgentConfigSidebar
         :isOpen="chatUIStore.isConfigSidebarOpen"
-        @close="() => chatUIStore.isConfigSidebarOpen = false"
+        @close="() => (chatUIStore.isConfigSidebarOpen = false)"
       />
 
       <!-- 反馈模态框 -->
@@ -81,12 +150,10 @@
               <ShareAltOutlined class="menu-icon" />
               <span class="menu-text">分享对话</span>
             </div>
-            <div class="menu-divider"></div>
             <div class="menu-item" @click="handleFeedback">
               <MessageOutlined class="menu-icon" />
               <span class="menu-text">查看反馈</span>
             </div>
-            <div class="menu-divider"></div>
             <div class="menu-item" @click="handlePreview">
               <EyeOutlined class="menu-icon" />
               <span class="menu-text">预览页面</span>
@@ -99,173 +166,210 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue';
+import { ref, watch } from 'vue'
 import {
   StarOutlined,
   StarFilled,
   MessageOutlined,
   ShareAltOutlined,
-  EyeOutlined,
-} from '@ant-design/icons-vue';
-import { message } from 'ant-design-vue';
-import { Settings2, Ellipsis } from 'lucide-vue-next';
-import AgentChatComponent from '@/components/AgentChatComponent.vue';
-import AgentConfigSidebar from '@/components/AgentConfigSidebar.vue';
-import FeedbackModalComponent from '@/components/dashboard/FeedbackModalComponent.vue';
-import { useUserStore } from '@/stores/user';
-import { useAgentStore } from '@/stores/agent';
-import { useChatUIStore } from '@/stores/chatUI';
-import { ChatExporter } from '@/utils/chatExporter';
-import { handleChatError } from '@/utils/errorHandler';
-import { onClickOutside } from '@vueuse/core';
+  EyeOutlined
+} from '@ant-design/icons-vue'
+import { message } from 'ant-design-vue'
+import { Settings2, Ellipsis, ChevronDown, Star, Plus, SquarePen } from 'lucide-vue-next'
+import AgentChatComponent from '@/components/AgentChatComponent.vue'
+import AgentConfigSidebar from '@/components/AgentConfigSidebar.vue'
+import FeedbackModalComponent from '@/components/dashboard/FeedbackModalComponent.vue'
+import { useUserStore } from '@/stores/user'
+import { useAgentStore } from '@/stores/agent'
+import { useChatUIStore } from '@/stores/chatUI'
+import { ChatExporter } from '@/utils/chatExporter'
+import { handleChatError } from '@/utils/errorHandler'
+import { onClickOutside } from '@vueuse/core'
 
-import { storeToRefs } from 'pinia';
+import { storeToRefs } from 'pinia'
 
 // 组件引用
 const feedbackModal = ref(null)
 const chatComponentRef = ref(null)
 
 // Stores
-const userStore = useUserStore();
-const agentStore = useAgentStore();
-const chatUIStore = useChatUIStore();
+const userStore = useUserStore()
+const agentStore = useAgentStore()
+const chatUIStore = useChatUIStore()
 
 // 从 agentStore 中获取响应式状态
 const {
   agents,
   selectedAgentId,
   defaultAgentId,
-} = storeToRefs(agentStore);
+  agentConfigs,
+  selectedAgentConfigId,
+  selectedConfigSummary
+} = storeToRefs(agentStore)
 
 // 设置为默认智能体
 const setAsDefaultAgent = async (agentId) => {
-  if (!agentId || !userStore.isAdmin) return;
+  if (!agentId || !userStore.isAdmin) return
 
   try {
-    await agentStore.setDefaultAgent(agentId);
-    message.success('已将当前智能体设为默认');
+    await agentStore.setDefaultAgent(agentId)
+    message.success('已将当前智能体设为默认')
   } catch (error) {
-    console.error('设置默认智能体错误:', error);
-    message.error(error.message || '设置默认智能体时发生错误');
+    console.error('设置默认智能体错误:', error)
+    message.error(error.message || '设置默认智能体时发生错误')
   }
-};
-
-
-
-
+}
 
 // 这些方法现在由agentStore处理，无需在组件中定义
 
-const loadAgentConfig = async () => {
-  try {
-    await agentStore.loadAgentConfig();
-  } catch (error) {
-    console.error('加载配置出错:', error);
-    message.error('加载配置失败');
-  }
-};
-
-
 // 选择智能体（使用store方法）
-const selectAgent = (agentId) => {
-  agentStore.selectAgent(agentId);
-  // 加载该智能体的配置
-  loadAgentConfig();
-};
+const selectAgent = async (agentId) => {
+  await agentStore.selectAgent(agentId)
+}
 
 // 打开智能体选择弹窗
 const openAgentModal = () => {
-  chatUIStore.agentModalOpen = true;
-};
+  chatUIStore.agentModalOpen = true
+}
 
 // 从弹窗中选择智能体
-const selectAgentFromModal = (agentId) => {
-  selectAgent(agentId);
-  chatUIStore.agentModalOpen = false;
-};
-
+const selectAgentFromModal = async (agentId) => {
+  await selectAgent(agentId)
+  chatUIStore.agentModalOpen = false
+}
 
 const toggleConf = () => {
   chatUIStore.isConfigSidebarOpen = !chatUIStore.isConfigSidebarOpen
 }
 
+const openConfigSidebar = () => {
+  chatUIStore.isConfigSidebarOpen = true
+}
+
+const createConfigModalOpen = ref(false)
+const createConfigLoading = ref(false)
+const createConfigName = ref('')
+
+const openCreateConfigModal = () => {
+  createConfigName.value = ''
+  createConfigModalOpen.value = true
+}
+
+const handleCreateConfig = async () => {
+  if (!selectedAgentId.value) return
+  if (!createConfigName.value) {
+    message.error('请输入配置名称')
+    return
+  }
+
+  createConfigLoading.value = true
+  try {
+    await agentStore.createAgentConfigProfile({
+      name: createConfigName.value,
+      setDefault: false,
+      fromCurrent: false
+    })
+    createConfigModalOpen.value = false
+    chatUIStore.isConfigSidebarOpen = true
+    message.success('配置已创建')
+  } catch (error) {
+    console.error('创建配置出错:', error)
+    message.error(error.message || '创建配置失败')
+  } finally {
+    createConfigLoading.value = false
+  }
+}
+
+const selectAgentConfig = async (configId) => {
+  try {
+    await agentStore.selectAgentConfig(configId)
+  } catch (error) {
+    console.error('切换配置出错:', error)
+    message.error('切换配置失败')
+  }
+}
+
 // 更多菜单相关
-const moreMenuRef = ref(null);
-const moreButtonRef = ref(null);
+const moreMenuRef = ref(null)
+const moreButtonRef = ref(null)
 
 const toggleMoreMenu = (event) => {
-  event.stopPropagation();
+  event.stopPropagation()
   // 切换状态，而不是只打开
-  chatUIStore.moreMenuOpen = !chatUIStore.moreMenuOpen;
+  chatUIStore.moreMenuOpen = !chatUIStore.moreMenuOpen
 
   if (chatUIStore.moreMenuOpen) {
     // 只在打开时计算位置
-    const rect = event.currentTarget.getBoundingClientRect();
-    chatUIStore.openMoreMenu(rect.right - 130, rect.bottom + 8);
+    const rect = event.currentTarget.getBoundingClientRect()
+    chatUIStore.openMoreMenu(rect.right - 130, rect.bottom + 8)
   }
-};
+}
 
 const closeMoreMenu = () => {
-  chatUIStore.closeMoreMenu();
-};
+  chatUIStore.closeMoreMenu()
+}
 
 // 使用 VueUse 的 onClickOutside
-onClickOutside(moreMenuRef, () => {
-  if (chatUIStore.moreMenuOpen) {
-    closeMoreMenu();
-  }
-}, { ignore: [moreButtonRef] });
+onClickOutside(
+  moreMenuRef,
+  () => {
+    if (chatUIStore.moreMenuOpen) {
+      closeMoreMenu()
+    }
+  },
+  { ignore: [moreButtonRef] }
+)
 
 const handleShareChat = async () => {
-  closeMoreMenu();
+  closeMoreMenu()
 
   try {
     // 从聊天组件获取导出数据
-    const exportData = chatComponentRef.value?.getExportPayload?.();
+    const exportData = chatComponentRef.value?.getExportPayload?.()
 
-    console.log('[AgentView] Export data:', exportData);
+    console.log('[AgentView] Export data:', exportData)
 
     if (!exportData) {
-      message.warning('当前没有可导出的对话内容');
-      return;
+      message.warning('当前没有可导出的对话内容')
+      return
     }
 
     // 检查是否有实际的消息内容
-    const hasMessages = exportData.messages && exportData.messages.length > 0;
-    const hasOngoingMessages = exportData.onGoingMessages && exportData.onGoingMessages.length > 0;
+    const hasMessages = exportData.messages && exportData.messages.length > 0
+    const hasOngoingMessages = exportData.onGoingMessages && exportData.onGoingMessages.length > 0
 
     if (!hasMessages && !hasOngoingMessages) {
       console.warn('[AgentView] Export data has no messages:', {
         messages: exportData.messages,
         onGoingMessages: exportData.onGoingMessages
-      });
-      message.warning('当前对话暂无内容可导出，请先进行对话');
-      return;
+      })
+      message.warning('当前对话暂无内容可导出，请先进行对话')
+      return
     }
 
-    const result = await ChatExporter.exportToHTML(exportData);
-    message.success(`对话已导出为HTML文件: ${result.filename}`);
+    const result = await ChatExporter.exportToHTML(exportData)
+    message.success(`对话已导出为HTML文件: ${result.filename}`)
   } catch (error) {
-    console.error('[AgentView] Export error:', error);
+    console.error('[AgentView] Export error:', error)
     if (error?.message?.includes('没有可导出的对话内容')) {
-      message.warning('当前对话暂无内容可导出，请先进行对话');
-      return;
+      message.warning('当前对话暂无内容可导出，请先进行对话')
+      return
     }
-    handleChatError(error, 'export');
+    handleChatError(error, 'export')
   }
-};
+}
 
 const handleFeedback = () => {
-  closeMoreMenu();
-  feedbackModal.value?.show();
-};
+  closeMoreMenu()
+  feedbackModal.value?.show()
+}
 
 const handlePreview = () => {
-  closeMoreMenu();
+  closeMoreMenu()
   if (selectedAgentId.value) {
-    window.open(`/agent/${selectedAgentId.value}`, '_blank');
+    window.open(`/agent/${selectedAgentId.value}`, '_blank')
   }
-};
+}
 </script>
 
 <style lang="less" scoped>
@@ -340,8 +444,6 @@ const handlePreview = () => {
   }
 }
 
-
-
 .agent-model {
   width: 100%;
 }
@@ -349,7 +451,7 @@ const handlePreview = () => {
 .config-modal-content {
   user-select: text;
 
-  div[role="alert"] {
+  div[role='alert'] {
     margin-bottom: 10px;
   }
 
@@ -509,7 +611,7 @@ const handlePreview = () => {
 .tools-modal {
   :deep(.ant-modal-content) {
     border-radius: 8px;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
     overflow: hidden;
   }
   :deep(.ant-modal-header) {
@@ -551,9 +653,13 @@ const handlePreview = () => {
         padding: 14px 16px;
         border-bottom: 1px solid var(--gray-100);
         cursor: pointer;
-        transition: background 0.2s, border 0.2s;
+        transition:
+          background 0.2s,
+          border 0.2s;
         border-left: 3px solid transparent;
-        &:last-child { border-bottom: none; }
+        &:last-child {
+          border-bottom: none;
+        }
         &:hover {
           background: var(--gray-50);
         }
@@ -572,7 +678,9 @@ const handlePreview = () => {
               color: var(--gray-900);
               font-size: 14px;
             }
-            .tool-indicator { display: none; }
+            .tool-indicator {
+              display: none;
+            }
           }
           .tool-description {
             font-size: 13px;
@@ -585,7 +693,6 @@ const handlePreview = () => {
             overflow: hidden;
             text-overflow: ellipsis;
           }
-
         }
       }
     }
@@ -725,7 +832,6 @@ const handlePreview = () => {
   }
 }
 
-
 // 智能体选择器样式
 .agent-selector {
   border: 1px solid var(--gray-300);
@@ -837,7 +943,6 @@ const handlePreview = () => {
         text-overflow: ellipsis;
       }
 
-
       &.selected {
         border-color: var(--main-color);
         background: var(--main-20);
@@ -851,7 +956,6 @@ const handlePreview = () => {
           color: var(--gray-900);
         }
       }
-
     }
   }
 }
@@ -870,19 +974,21 @@ const handlePreview = () => {
 // 自定义更多菜单样式
 .more-popup-menu {
   position: fixed;
-  min-width: 130px;
+  min-width: 100px;
   background: var(--gray-0);
   border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08), 0 2px 8px rgba(0, 0, 0, 0.04);
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.04);
   border: 1px solid var(--gray-100);
-  padding: 6px;
+  padding: 4px;
   z-index: 9999;
 
   .menu-item {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 6px 14px;
+    padding: 6px 8px;
     border-radius: 6px;
     cursor: pointer;
     transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
@@ -924,7 +1030,6 @@ const handlePreview = () => {
   }
 }
 
-
 // 菜单淡入淡出动画
 .menu-fade-enter-active {
   animation: menuSlideIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
@@ -959,13 +1064,12 @@ const handlePreview = () => {
 // 响应式优化
 @media (max-width: 520px) {
   .more-popup-menu {
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12), 0 4px 12px rgba(0, 0, 0, 0.06);
+    box-shadow:
+      0 12px 32px rgba(0, 0, 0, 0.12),
+      0 4px 12px rgba(0, 0, 0, 0.06);
   }
 }
-
-
 </style>
-
 
 <style lang="less">
 .toggle-conf {
@@ -1000,7 +1104,6 @@ const handlePreview = () => {
   }
 }
 
-
 // 针对 Ant Design Select 组件的深度样式修复
 :deep(.ant-select-item-option-content) {
   .agent-option-name {
@@ -1010,7 +1113,23 @@ const handlePreview = () => {
   }
 }
 
-.hide-text {
-  display: none;
+// 菜单项布局样式
+.menu-item-layout {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.menu-item-full {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+@media (max-width: 768px) {
+  .hide-text {
+    display: none;
+  }
 }
 </style>

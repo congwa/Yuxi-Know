@@ -8,7 +8,7 @@ Yuxi-Know（语析）是一个基于知识图谱和向量数据库的智能知�
 
 - **后端服务**: [FastAPI](https://github.com/tiangolo/fastapi) + Python 3.12+
 - **前端界面**: [Vue.js 3](https://github.com/vuejs/vue) + [Ant Design Vue](https://github.com/vueComponent/ant-design-vue)
-- **数据库存储**: [SQLite](https://github.com/sqlite/sqlite) + [MinIO](https://github.com/minio/minio)
+- **数据库存储**: [PostgreSQL](https://github.com/postgres/postgres) + [MinIO](https://github.com/minio/minio)
 - **知识存储**: [Milvus](https://github.com/milvus-io/milvus)（向量数据库）+ [Neo4j](https://github.com/neo4j/neo4j)（图数据库）
 - **智能体框架**: [LangGraph](https://github.com/langchain-ai/langgraph)
 - **文档解析**: [LightRAG](https://github.com/HKUDS/LightRAG) + [MinerU](https://github.com/HKUDS/MinerU) + [PP-Structure-V3](https://github.com/PaddlePaddle/PaddleOCR)
@@ -20,5 +20,5 @@ Yuxi-Know（语析）是一个基于知识图谱和向量数据库的智能知�
 - **知识库管理**: 支持多种存储形式（Milvus、LightRAG）
 - **知识图谱**: 自动构建和可视化知识图谱，支持图查询
 - **文档解析**: 支持 PDF、Word、图片等多种格式的智能解析
-- **权限管理**: 三级权限体系（超级管理员、管理员、普通用户）
+- **权限管理**: 基于部门的知识库访问控制
 - **内容安全**: 内置内容审查机制，保障服务合规性

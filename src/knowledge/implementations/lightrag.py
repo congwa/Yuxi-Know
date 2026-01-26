@@ -1,5 +1,6 @@
 import os
 import traceback
+from functools import partial
 
 from lightrag import LightRAG, QueryParam
 from lightrag.kg.shared_storage import initialize_pipeline_status
@@ -31,17 +32,6 @@ class LightRagKB(KnowledgeBase):
 
         # 存储 LightRAG 实例映射 {db_id: LightRAG}
         self.instances: dict[str, LightRAG] = {}
-
-        # 设置 LightRAG 日志
-        log_dir = os.path.join(work_dir, "logs", "lightrag")
-        os.makedirs(log_dir, exist_ok=True)
-        # 禁止调用 lightrag.utils.setup_logger，因为它会重置全局 logger 配置（调用 logger.remove()）
-        # 导致主程序的控制台输出丢失。
-        # 全局 logger 已在 src/utils/logging_config.py 中配置好。
-        # setup_logger(
-        #     "lightrag",
-        #     log_file_path=os.path.join(log_dir, f"lightrag_{shanghai_now().strftime('%Y-%m-%d')}.log"),
-        # )
 
         logger.info("LightRagKB initialized")
 
@@ -233,8 +223,9 @@ class LightRagKB(KnowledgeBase):
         return EmbeddingFunc(
             embedding_dim=config_dict["dimension"],
             max_token_size=8192,
-            func=lambda texts: openai_embed(
-                texts=texts,
+            model_name=model_name,
+            func=partial(
+                openai_embed.func,
                 model=model_name,
                 api_key=config_dict["api_key"],
                 base_url=config_dict["base_url"].replace("/embeddings", ""),
@@ -293,7 +284,7 @@ class LightRagKB(KnowledgeBase):
         self.files_meta[file_id]["updated_at"] = utc_isoformat()
         if operator_id:
             self.files_meta[file_id]["updated_by"] = operator_id
-        self._save_metadata()
+        await self._save_metadata()
 
         # Add to processing queue
         self._add_to_processing_queue(file_id)
@@ -316,7 +307,7 @@ class LightRagKB(KnowledgeBase):
             self.files_meta[file_id]["updated_at"] = utc_isoformat()
             if operator_id:
                 self.files_meta[file_id]["updated_by"] = operator_id
-            self._save_metadata()
+            await self._save_metadata()
 
             return self.files_meta[file_id]
 
@@ -327,7 +318,7 @@ class LightRagKB(KnowledgeBase):
             self.files_meta[file_id]["updated_at"] = utc_isoformat()
             if operator_id:
                 self.files_meta[file_id]["updated_by"] = operator_id
-            self._save_metadata()
+            await self._save_metadata()
             raise
 
         finally:
@@ -369,7 +360,7 @@ class LightRagKB(KnowledgeBase):
                 # 更新状态为处理中
                 self.files_meta[file_id]["processing_params"] = params.copy()
                 self.files_meta[file_id]["status"] = "processing"
-                self._save_metadata()
+                await self._save_metadata()
 
                 # 重新解析文件为 markdown
                 if content_type != "file":
@@ -388,7 +379,7 @@ class LightRagKB(KnowledgeBase):
 
                 # 更新元数据状态
                 self.files_meta[file_id]["status"] = "done"
-                self._save_metadata()
+                await self._save_metadata()
 
                 # 从处理队列中移除
                 self._remove_from_processing_queue(file_id)
@@ -404,7 +395,7 @@ class LightRagKB(KnowledgeBase):
                 logger.error(f"更新{content_type} {file_path} 失败: {error_msg}, {traceback.format_exc()}")
                 self.files_meta[file_id]["status"] = "failed"
                 self.files_meta[file_id]["error"] = error_msg
-                self._save_metadata()
+                await self._save_metadata()
 
                 # 从处理队列中移除
                 self._remove_from_processing_queue(file_id)
@@ -465,7 +456,28 @@ class LightRagKB(KnowledgeBase):
             logger.debug(f"Query response: {str(response)[:1000]}...")
 
             if agent_call:
-                return response["data"]["chunks"]
+                scope = query_params.get("retrieval_content_scope", "chunks")
+                data = response.get("data", {}) or {}
+
+                if scope == "chunks":
+                    return data.get("chunks", [])
+
+                result = {}
+                if scope in ["graph", "all"]:
+                    # 过滤掉无关信息，保留实体和关系的核心内容
+                    exclude_keys = {"source_id", "file_path", "created_at"}
+
+                    ents = data.get("entities", [])
+                    rels = data.get("relationships", [])
+
+                    result["entities"] = [{k: v for k, v in e.items() if k not in exclude_keys} for e in ents]
+                    result["relationships"] = [{k: v for k, v in r.items() if k not in exclude_keys} for r in rels]
+                    result["references"] = data.get("references", [])
+
+                if scope == "all":
+                    result["chunks"] = data.get("chunks", [])
+
+                return result
 
             return response
 
@@ -493,7 +505,10 @@ class LightRagKB(KnowledgeBase):
         # 删除文件记录
         if file_id in self.files_meta:
             del self.files_meta[file_id]
-            self._save_metadata()
+            from src.repositories.knowledge_file_repository import KnowledgeFileRepository
+
+            await KnowledgeFileRepository().delete(file_id)
+            await self._save_metadata()
 
     async def get_file_basic_info(self, db_id: str, file_id: str) -> dict:
         """获取文件基本信息（仅元数据）"""
@@ -596,6 +611,17 @@ class LightRagKB(KnowledgeBase):
                 "min": 1,
                 "max": 100,
                 "description": "返回的最大结果数量",
+            },
+            {
+                "key": "retrieval_content_scope",
+                "label": "传递给 LLM 的内容",
+                "type": "select",
+                "default": "chunks",
+                "options": [
+                    {"value": "chunks", "label": "仅 Chunks", "description": "仅返回文档片段"},
+                    {"value": "graph", "label": "仅 Entity/Relation", "description": "仅返回知识图谱信息"},
+                    {"value": "all", "label": "全部", "description": "返回文档片段和知识图谱信息"},
+                ],
             },
         ]
 

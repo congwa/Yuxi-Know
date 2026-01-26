@@ -12,24 +12,14 @@
           size="small"
         ></a-button>
         <h3 class="card-title">{{ database.name || '数据库信息加载中' }}</h3>
-
       </div>
       <div class="header-right">
-        <a-button
-          type="text"
-          size="small"
-          @click="copyDatabaseId"
-          title="复制知识库ID"
-        >
+        <a-button type="text" size="small" @click="copyDatabaseId" title="复制知识库ID">
           <template #icon>
             <Copy :size="14" />
           </template>
         </a-button>
-        <a-button
-          @click="showEditModal"
-          type="text"
-          size="small"
-        >
+        <a-button @click="showEditModal" type="text" size="small">
           <template #icon>
             <Pencil :size="14" />
           </template>
@@ -46,10 +36,7 @@
 
       <!-- Tags -->
       <div class="tags-section">
-        <a-tag
-          :color="getKbTypeColor(database.kb_type || 'lightrag')"
-          size="small"
-        >
+        <a-tag :color="getKbTypeColor(database.kb_type || 'lightrag')" size="small">
           {{ getKbTypeLabel(database.kb_type || 'lightrag') }}
         </a-tag>
         <a-tag color="blue" size="small">{{ database.embed_info?.name || 'N/A' }}</a-tag>
@@ -60,9 +47,9 @@
   <!-- 编辑对话框 -->
   <a-modal v-model:open="editModalVisible" title="编辑知识库信息">
     <template #footer>
-      <a-button danger @click="deleteDatabase" style="margin-right: auto; margin-left: 0;">
+      <a-button danger @click="deleteDatabase" style="margin-right: auto; margin-left: 0">
         <template #icon>
-          <Trash2 :size="16" style="vertical-align: -3px; margin-right: 4px;" />
+          <Trash2 :size="16" style="vertical-align: -3px; margin-right: 4px" />
         </template>
         删除数据库
       </a-button>
@@ -84,8 +71,14 @@
       </a-form-item>
 
       <a-form-item label="自动生成问题" name="auto_generate_questions">
-        <a-switch v-model:checked="editForm.auto_generate_questions" checked-children="开启" un-checked-children="关闭" />
-        <span style="margin-left: 8px; font-size: 12px; color: var(--gray-500);">上传文件后自动生成测试问题</span>
+        <a-switch
+          v-model:checked="editForm.auto_generate_questions"
+          checked-children="开启"
+          un-checked-children="关闭"
+        />
+        <span style="margin-left: 8px; font-size: 12px; color: var(--gray-500)"
+          >上传文件后自动生成测试问题</span
+        >
       </a-form-item>
 
       <!-- 仅对 LightRAG 类型显示 LLM 配置 -->
@@ -94,81 +87,135 @@
           :model_spec="llmModelSpec"
           placeholder="请选择模型"
           @select-model="handleLLMSelect"
-          style="width: 100%;"
+          style="width: 100%"
         />
+      </a-form-item>
+
+      <!-- 共享配置（超级管理员可编辑，非共享时本部门管理员也可编辑） -->
+      <a-form-item v-if="canEditShareConfig" label="共享设置" name="share_config">
+        <a-form-item-rest>
+          <ShareConfigForm
+            ref="shareConfigFormRef"
+            :model-value="database.share_config"
+            :auto-select-user-dept="true"
+          />
+        </a-form-item-rest>
+      </a-form-item>
+      <!-- 非编辑状态下显示共享配置信息 -->
+      <a-form-item v-else-if="database.share_config" label="共享设置" name="share_config_readonly">
+        <div class="share-config-readonly">
+          <a-tag :color="database.share_config.is_shared !== false ? 'green' : 'blue'">
+            {{ database.share_config.is_shared !== false ? '全员共享' : '指定部门' }}
+          </a-tag>
+          <span v-if="database.share_config.is_shared === false" class="dept-names">
+            {{ getAccessibleDeptNames() }}
+          </span>
+        </div>
       </a-form-item>
     </a-form>
   </a-modal>
 </template>
 
 <script setup>
-import { ref, reactive, computed, h } from 'vue';
-import { useRouter } from 'vue-router';
-import { useDatabaseStore } from '@/stores/database';
-import { getKbTypeLabel, getKbTypeColor } from '@/utils/kb_utils';
-import { message } from 'ant-design-vue';
-import { LeftOutlined } from '@ant-design/icons-vue';
-import {
-  Pencil,
-  Trash2,
-  Copy,
-} from 'lucide-vue-next';
-import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue';
-import AiTextarea from '@/components/AiTextarea.vue';
+import { ref, reactive, computed, h, onMounted, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import { useDatabaseStore } from '@/stores/database'
+import { useUserStore } from '@/stores/user'
+import { getKbTypeLabel, getKbTypeColor } from '@/utils/kb_utils'
+import { message } from 'ant-design-vue'
+import { LeftOutlined } from '@ant-design/icons-vue'
+import { Pencil, Trash2, Copy } from 'lucide-vue-next'
+import { departmentApi } from '@/apis/department_api'
+import ModelSelectorComponent from '@/components/ModelSelectorComponent.vue'
+import AiTextarea from '@/components/AiTextarea.vue'
+import ShareConfigForm from '@/components/ShareConfigForm.vue'
 
-const router = useRouter();
-const store = useDatabaseStore();
+const router = useRouter()
+const store = useDatabaseStore()
+const userStore = useUserStore()
 
-const database = computed(() => store.database);
+const database = computed(() => store.database)
+
+// 部门列表（用于显示部门名称）
+const departments = ref([])
+
+// 加载部门列表
+const loadDepartments = async () => {
+  try {
+    const res = await departmentApi.getDepartments()
+    departments.value = res.departments || res || []
+  } catch (e) {
+    console.error('加载部门列表失败:', e)
+    departments.value = []
+  }
+}
+
+// 初始化时加载部门
+onMounted(() => {
+  loadDepartments()
+})
+
+// 获取可访问的部门名称
+const getAccessibleDeptNames = () => {
+  const deptIds = database.value?.share_config?.accessible_departments || []
+  if (deptIds.length === 0) return '无'
+  return deptIds
+    .map((id) => {
+      const dept = departments.value.find((d) => d.id === id)
+      return dept?.name || `部门${id}`
+    })
+    .join('、')
+}
+
+// 是否可以编辑共享配置
+// 规则：1. 超级管理员可以编辑所有
+//       2. 管理员也可以编辑（后端会验证权限）
+const canEditShareConfig = computed(() => {
+  if (userStore.isSuperAdmin) {
+    return true
+  }
+  // 管理员可以编辑共享配置，后端会验证权限
+  return userStore.isAdmin
+})
 
 const fileList = computed(() => {
-  if (!database.value?.files) return [];
-  return Object.values(database.value.files).map(f => f.filename).filter(Boolean);
-});
+  if (!database.value?.files) return []
+  return Object.values(database.value.files)
+    .map((f) => f.filename)
+    .filter(Boolean)
+})
 
 // 复制数据库ID
 const copyDatabaseId = async () => {
   if (!database.value.db_id) {
-    message.warning('知识库ID为空');
-    return;
+    message.warning('知识库ID为空')
+    return
   }
 
   try {
-    await navigator.clipboard.writeText(database.value.db_id);
-    message.success('知识库ID已复制到剪贴板');
+    await navigator.clipboard.writeText(database.value.db_id)
+    message.success('知识库ID已复制到剪贴板')
   } catch (err) {
     // 降级方案
-    const textArea = document.createElement('textarea');
-    textArea.value = database.value.db_id;
-    document.body.appendChild(textArea);
-    textArea.select();
-    document.execCommand('copy');
-    document.body.removeChild(textArea);
-    message.success('知识库ID已复制到剪贴板');
+    const textArea = document.createElement('textarea')
+    textArea.value = database.value.db_id
+    document.body.appendChild(textArea)
+    textArea.select()
+    document.execCommand('copy')
+    document.body.removeChild(textArea)
+    message.success('知识库ID已复制到剪贴板')
   }
-};
-
-// 格式化日期
-const formatDate = (dateStr) => {
-  if (!dateStr) return 'N/A';
-  const date = new Date(dateStr);
-  return date.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  });
-};
+}
 
 // 返回数据库列表
 const backToDatabase = () => {
-  router.push('/database');
-};
+  router.push('/database')
+}
 
 // 编辑相关逻辑（复用自 DatabaseHeader）
-const editModalVisible = ref(false);
-const editFormRef = ref(null);
+const editModalVisible = ref(false)
+const editFormRef = ref(null)
+const shareConfigFormRef = ref(null)
 const editForm = reactive({
   name: '',
   description: '',
@@ -177,76 +224,119 @@ const editForm = reactive({
     provider: '',
     model_name: ''
   }
-});
+})
 
 const rules = {
   name: [{ required: true, message: '请输入知识库名称' }]
-};
+}
 
+// 打开编辑弹窗
 const showEditModal = () => {
-  editForm.name = database.value.name || '';
-  editForm.description = database.value.description || '';
-  editForm.auto_generate_questions = database.value.additional_params?.auto_generate_questions || false;
+  console.log('[showEditModal] 被调用')
+
+  editForm.name = database.value.name || ''
+  editForm.description = database.value.description || ''
+  editForm.auto_generate_questions =
+    database.value.additional_params?.auto_generate_questions || false
 
   // 如果是 LightRAG 类型，加载当前的 LLM 配置
   if (database.value.kb_type === 'lightrag') {
-    const llmInfo = database.value.llm_info || {};
-    editForm.llm_info.provider = llmInfo.provider || '';
-    editForm.llm_info.model_name = llmInfo.model_name || '';
+    const llmInfo = database.value.llm_info || {}
+    editForm.llm_info.provider = llmInfo.provider || ''
+    editForm.llm_info.model_name = llmInfo.model_name || ''
   }
-  editModalVisible.value = true;
-};
+
+  editModalVisible.value = true
+}
 
 const handleEditSubmit = () => {
-  editFormRef.value.validate().then(async () => {
-    const updateData = {
-      name: editForm.name,
-      description: editForm.description,
-      additional_params: {
-        auto_generate_questions: editForm.auto_generate_questions
+  editFormRef.value
+    .validate()
+    .then(async () => {
+      // 验证共享配置
+      if (shareConfigFormRef.value) {
+        const validation = shareConfigFormRef.value.validate()
+        if (!validation.valid) {
+          message.warning(validation.message)
+          return
+        }
       }
-    };
 
-    // 如果是 LightRAG 类型，包含 llm_info
-    if (database.value.kb_type === 'lightrag') {
-      updateData.llm_info = {
-        provider: editForm.llm_info.provider,
-        model_name: editForm.llm_info.model_name
-      };
-    }
+      // 从 ShareConfigForm 组件直接获取当前值
+      let finalIsShared = true
+      let finalDeptIds = []
 
-    await store.updateDatabaseInfo(updateData);
-    editModalVisible.value = false;
-  }).catch(err => {
-    console.error('表单验证失败:', err);
-  });
-};
+      if (shareConfigFormRef.value) {
+        const formConfig = shareConfigFormRef.value.config
+        finalIsShared = formConfig.is_shared
+        finalDeptIds = formConfig.accessible_department_ids || []
+      }
+
+      console.log(
+        '[handleEditSubmit] 直接从组件获取 - is_shared:',
+        finalIsShared,
+        'dept_ids:',
+        JSON.stringify(finalDeptIds)
+      )
+
+      const updateData = {
+        name: editForm.name,
+        description: editForm.description,
+        additional_params: {
+          auto_generate_questions: editForm.auto_generate_questions
+        },
+        share_config: {
+          is_shared: finalIsShared,
+          accessible_departments: finalIsShared ? [] : finalDeptIds
+        }
+      }
+
+      console.log(
+        '[handleEditSubmit] updateData.share_config:',
+        JSON.stringify(updateData.share_config)
+      )
+
+      // 如果是 LightRAG 类型，包含 llm_info
+      if (database.value.kb_type === 'lightrag') {
+        updateData.llm_info = {
+          provider: editForm.llm_info.provider,
+          model_name: editForm.llm_info.model_name
+        }
+      }
+
+      await store.updateDatabaseInfo(updateData)
+      editModalVisible.value = false
+    })
+    .catch((err) => {
+      console.error('表单验证失败:', err)
+    })
+}
 
 // LLM 模型选择处理
 const llmModelSpec = computed(() => {
-  const provider = editForm.llm_info?.provider || '';
-  const modelName = editForm.llm_info?.model_name || '';
+  const provider = editForm.llm_info?.provider || ''
+  const modelName = editForm.llm_info?.model_name || ''
   if (provider && modelName) {
-    return `${provider}/${modelName}`;
+    return `${provider}/${modelName}`
   }
-  return '';
-});
+  return ''
+})
 
 const handleLLMSelect = (spec) => {
-  console.log('LLM选择:', spec);
-  if (typeof spec !== 'string' || !spec) return;
+  console.log('LLM选择:', spec)
+  if (typeof spec !== 'string' || !spec) return
 
-  const index = spec.indexOf('/');
-  const provider = index !== -1 ? spec.slice(0, index) : '';
-  const modelName = index !== -1 ? spec.slice(index + 1) : '';
+  const index = spec.indexOf('/')
+  const provider = index !== -1 ? spec.slice(0, index) : ''
+  const modelName = index !== -1 ? spec.slice(index + 1) : ''
 
-  editForm.llm_info.provider = provider;
-  editForm.llm_info.model_name = modelName;
-};
+  editForm.llm_info.provider = provider
+  editForm.llm_info.model_name = modelName
+}
 
 const deleteDatabase = () => {
-  store.deleteDatabase();
-};
+  store.deleteDatabase()
+}
 </script>
 
 <style lang="less" scoped>
@@ -255,6 +345,18 @@ const deleteDatabase = () => {
   border-radius: 12px;
   border: 1px solid var(--gray-200);
   margin-bottom: 8px;
+}
+
+// 只读共享配置显示
+.share-config-readonly {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  .dept-names {
+    font-size: 13px;
+    color: var(--gray-600);
+  }
 }
 
 .card-header {
@@ -326,5 +428,4 @@ const deleteDatabase = () => {
   align-items: center;
   flex-wrap: wrap;
 }
-
 </style>

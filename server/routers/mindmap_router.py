@@ -14,7 +14,7 @@ import textwrap
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
-from src.storage.db.models import User
+from src.storage.postgres.models_business import User
 from server.utils.auth_middleware import get_admin_user
 from src import knowledge_base
 from src.models import select_model
@@ -93,7 +93,7 @@ async def get_database_files(db_id: str, current_user: User = Depends(get_admin_
     """
     try:
         # 获取知识库详细信息
-        db_info = knowledge_base.get_database_info(db_id)
+        db_info = await knowledge_base.get_database_info(db_id)
 
         if not db_info:
             raise HTTPException(status_code=404, detail=f"知识库 {db_id} 不存在")
@@ -154,7 +154,7 @@ async def generate_mindmap(
     """
     try:
         # 获取知识库信息
-        db_info = knowledge_base.get_database_info(db_id)
+        db_info = await knowledge_base.get_database_info(db_id)
 
         if not db_info:
             raise HTTPException(status_code=404, detail=f"知识库 {db_id} 不存在")
@@ -244,11 +244,10 @@ async def generate_mindmap(
 
             # 保存思维导图到知识库元数据
             try:
-                async with knowledge_base._metadata_lock:
-                    if db_id in knowledge_base.global_databases_meta:
-                        knowledge_base.global_databases_meta[db_id]["mindmap"] = mindmap_data
-                        knowledge_base._save_global_metadata()
-                        logger.info(f"思维导图已保存到知识库: {db_id}")
+                from src.repositories.knowledge_base_repository import KnowledgeBaseRepository
+
+                await KnowledgeBaseRepository().update(db_id, {"mindmap": mindmap_data})
+                logger.info(f"思维导图已保存到知识库: {db_id}")
             except Exception as save_error:
                 logger.error(f"保存思维导图失败: {save_error}")
                 # 不影响返回结果，只记录错误
@@ -282,13 +281,14 @@ async def generate_mindmap(
 @mindmap.get("/databases")
 async def get_databases_overview(current_user: User = Depends(get_admin_user)):
     """
-    获取所有知识库的概览信息，用于思维导图界面选择
+    获取所有知识库的概览信息，用于思维导图界面选择（根据用户权限过滤）
 
     Returns:
         知识库列表
     """
     try:
-        databases = knowledge_base.get_databases()
+        user_info = {"role": current_user.role, "department_id": current_user.department_id}
+        databases = await knowledge_base.get_databases_by_user(user_info)
 
         # databases["databases"] 是一个列表，每个元素已经包含了基本信息
         db_list_raw = databases.get("databases", [])
@@ -300,7 +300,7 @@ async def get_databases_overview(current_user: User = Depends(get_admin_user)):
                 continue
 
             # 获取详细信息以获取文件数量
-            detail_info = knowledge_base.get_database_info(db_id)
+            detail_info = await knowledge_base.get_database_info(db_id)
             file_count = len(detail_info.get("files", {})) if detail_info else 0
 
             db_list.append(
@@ -341,18 +341,19 @@ async def get_database_mindmap(db_id: str, current_user: User = Depends(get_admi
         思维导图数据
     """
     try:
-        # 直接从全局元数据中读取思维导图
-        if db_id not in knowledge_base.global_databases_meta:
-            raise HTTPException(status_code=404, detail=f"知识库 {db_id} 不存在")
+        from src.repositories.knowledge_base_repository import KnowledgeBaseRepository
 
-        db_meta = knowledge_base.global_databases_meta[db_id]
-        mindmap_data = db_meta.get("mindmap")
+        kb_repo = KnowledgeBaseRepository()
+        kb = await kb_repo.get_by_id(db_id)
+
+        if kb is None:
+            raise HTTPException(status_code=404, detail=f"知识库 {db_id} 不存在")
 
         return {
             "message": "success",
-            "mindmap": mindmap_data,
+            "mindmap": kb.mindmap,
             "db_id": db_id,
-            "db_name": db_meta.get("name", ""),
+            "db_name": kb.name,
         }
 
     except HTTPException:

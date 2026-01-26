@@ -1,42 +1,55 @@
 <template>
   <div class="basic-settings-section">
     <h3 class="section-title">检索配置</h3>
-    <div class="section">
-      <div class="card card-select">
-        <span class="label">{{ items?.default_model?.des || '默认对话模型' }}</span>
-        <ModelSelectorComponent
-          @select-model="handleChatModelSelect"
-          :model_spec="configStore.config?.default_model"
-          placeholder="请选择默认模型"
-        />
+    <div class="settings-panel">
+      <div class="setting-row two-cols">
+        <div class="col-item">
+          <div class="setting-label">{{ items?.default_model?.des || '默认对话模型' }}</div>
+          <div class="setting-content">
+            <ModelSelectorComponent
+              @select-model="handleChatModelSelect"
+              :model_spec="configStore.config?.default_model"
+              placeholder="请选择默认模型"
+            />
+          </div>
+        </div>
+        <div class="col-item">
+          <div class="setting-label">{{ items?.fast_model.des }}</div>
+          <div class="setting-content">
+            <ModelSelectorComponent
+              @select-model="handleFastModelSelect"
+              :model_spec="configStore.config?.fast_model"
+              placeholder="请选择模型"
+            />
+          </div>
+        </div>
       </div>
-      <div class="card card-select">
-        <span class="label">{{ items?.fast_model.des }}</span>
-        <ModelSelectorComponent
-          @select-model="handleFastModelSelect"
-          :model_spec="configStore.config?.fast_model"
-          placeholder="请选择模型"
-        />
-      </div>
-      <div class="card card-select">
-        <span class="label">{{ items?.embed_model.des }}</span>
-        <EmbeddingModelSelector
-          :value="configStore.config?.embed_model"
-          @change="handleChange('embed_model', $event)"
-          style="width: 320px"
-        />
-      </div>
-      <div class="card card-select">
-        <span class="label">{{ items?.reranker.des }}</span>
-        <a-select style="width: 320px"
-          :value="configStore.config?.reranker"
-          @change="handleChange('reranker', $event)"
-        >
-          <a-select-option
-            v-for="(name, idx) in rerankerChoices" :key="idx"
-            :value="name">{{ name }}
-          </a-select-option>
-        </a-select>
+      <div class="setting-row two-cols">
+        <div class="col-item">
+          <div class="setting-label">{{ items?.embed_model.des }}</div>
+          <div class="setting-content">
+            <EmbeddingModelSelector
+              :value="configStore.config?.embed_model"
+              @change="handleChange('embed_model', $event)"
+              style="width: 100%"
+            />
+          </div>
+        </div>
+        <div class="col-item">
+          <div class="setting-label">{{ items?.reranker.des }}</div>
+          <div class="setting-content">
+            <a-select
+              class="full-width"
+              :value="configStore.config?.reranker"
+              @change="handleChange('reranker', $event)"
+              placeholder="请选择重排序模型"
+            >
+              <a-select-option v-for="(name, idx) in rerankerChoices" :key="idx" :value="name"
+                >{{ name }}
+              </a-select-option>
+            </a-select>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -56,7 +69,12 @@
           @change="handleChange('enable_content_guard_llm', $event)"
         />
       </div>
-      <div class="card card-select" v-if="configStore.config?.enable_content_guard && configStore.config?.enable_content_guard_llm">
+      <div
+        class="card card-select"
+        v-if="
+          configStore.config?.enable_content_guard && configStore.config?.enable_content_guard_llm
+        "
+      >
         <span class="label">{{ items?.content_guard_llm_model.des }}</span>
         <ModelSelectorComponent
           @select-model="handleContentGuardModelSelect"
@@ -69,14 +87,20 @@
     <!-- 服务链接部分 -->
     <h3 v-if="userStore.isAdmin" class="section-title">服务链接</h3>
     <div v-if="userStore.isAdmin">
-      <p class="service-description">快速访问系统相关的外部服务，需要将 localhost 替换为实际的 IP 地址。</p>
+      <p class="service-description">
+        快速访问系统相关的外部服务，需要将 localhost 替换为实际的 IP 地址。
+      </p>
       <div class="services-grid">
         <div class="service-link-card">
           <div class="service-info">
             <h4>Neo4j 浏览器</h4>
             <p>图数据库管理界面</p>
           </div>
-          <a-button type="default" @click="openLink('http://localhost:7474/')" :icon="h(GlobalOutlined)">
+          <a-button
+            type="default"
+            @click="openLink('http://localhost:7474/')"
+            :icon="h(GlobalOutlined)"
+          >
             访问
           </a-button>
         </div>
@@ -86,7 +110,11 @@
             <h4>API 接口文档</h4>
             <p>系统接口文档和调试工具</p>
           </div>
-          <a-button type="default" @click="openLink('http://localhost:5050/docs')" :icon="h(GlobalOutlined)">
+          <a-button
+            type="default"
+            @click="openLink('http://localhost:5050/docs')"
+            :icon="h(GlobalOutlined)"
+          >
             访问
           </a-button>
         </div>
@@ -96,7 +124,11 @@
             <h4>MinIO 对象存储</h4>
             <p>文件存储管理控制台</p>
           </div>
-          <a-button type="default" @click="openLink('http://localhost:9001')" :icon="h(GlobalOutlined)">
+          <a-button
+            type="default"
+            @click="openLink('http://localhost:9001')"
+            :icon="h(GlobalOutlined)"
+          >
             访问
           </a-button>
         </div>
@@ -106,7 +138,11 @@
             <h4>Milvus WebUI</h4>
             <p>向量数据库管理界面</p>
           </div>
-          <a-button type="default" @click="openLink('http://localhost:9091/webui/')" :icon="h(GlobalOutlined)">
+          <a-button
+            type="default"
+            @click="openLink('http://localhost:9091/webui/')"
+            :icon="h(GlobalOutlined)"
+          >
             访问
           </a-button>
         </div>
@@ -184,11 +220,11 @@ const openLink = (url) => {
     color: var(--gray-900);
     font-size: 16px;
     font-weight: 600;
-    margin: 24px 0 12px 0;
+    margin: 24px 0 0 0;
     padding-bottom: 8px;
 
     &:first-child {
-      margin-top: 8px;
+      margin-top: 12px;
     }
   }
 
@@ -200,7 +236,6 @@ const openLink = (url) => {
   }
 
   .section {
-    margin-top: 10px;
     background-color: var(--gray-0);
     padding: 10px 16px;
     border-radius: 8px;
@@ -208,6 +243,49 @@ const openLink = (url) => {
     flex-direction: column;
     gap: 16px;
     border: 1px solid var(--gray-150);
+  }
+
+  .settings-panel {
+    background-color: var(--gray-50);
+    border: 1px solid var(--gray-200);
+    border-radius: 8px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .setting-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    &.two-cols {
+      flex-direction: row;
+      gap: 20px;
+    }
+
+    .col-item {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+  }
+
+  .setting-label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--gray-700);
+  }
+
+  .setting-content {
+    width: 100%;
+
+    .full-width {
+      width: 100%;
+    }
   }
 
   .card {
@@ -245,7 +323,7 @@ const openLink = (url) => {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px;
+    padding: 10px 16px;
     border: 1px solid var(--gray-150);
     border-radius: 8px;
     background: var(--gray-0);
@@ -273,79 +351,6 @@ const openLink = (url) => {
         color: var(--gray-600);
         font-size: 13px;
         line-height: 1.4;
-      }
-    }
-  }
-}
-
-// 移动端适配
-@media (max-width: 768px) {
-  .basic-settings-section {
-    .section {
-      padding: 12px;
-    }
-
-    .card {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 12px;
-      padding: 16px 0;
-
-      .label {
-        margin-right: 0;
-        margin-bottom: 8px;
-      }
-
-      &.card-select {
-        .label {
-          margin-top: 0;
-        }
-      }
-    }
-
-    .services-grid {
-      grid-template-columns: 1fr;
-      gap: 12px;
-    }
-
-    .service-link-card {
-      flex-direction: column;
-      align-items: flex-start;
-      gap: 12px;
-      min-height: auto;
-      padding: 12px;
-
-      .service-info {
-        margin-right: 0;
-        margin-bottom: 8px;
-      }
-    }
-  }
-}
-
-// 小屏幕进一步优化
-@media (max-width: 480px) {
-  .basic-settings-section {
-    .section-title {
-      font-size: 15px;
-    }
-
-    .card {
-      .label {
-        font-size: 14px;
-        min-width: 120px;
-      }
-    }
-
-    .service-link-card {
-      .service-info {
-        h4 {
-          font-size: 14px;
-        }
-
-        p {
-          font-size: 12px;
-        }
       }
     }
   }

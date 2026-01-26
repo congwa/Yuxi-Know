@@ -1,27 +1,12 @@
 <template>
-  <a-drawer
-    :open="isOpen"
-    :width="620"
-    title="任务中心"
-    placement="right"
-    @close="handleClose"
-  >
+  <a-drawer :open="isOpen" :width="620" title="任务中心" placement="right" @close="handleClose">
     <div class="task-center">
       <div class="task-toolbar">
         <div class="task-filter-group">
-          <a-segmented
-            v-model:value="statusFilter"
-            :options="taskFilterOptions"
-          />
+          <a-segmented v-model:value="statusFilter" :options="taskFilterOptions" />
         </div>
         <div class="task-toolbar-actions">
-          <a-button
-            type="text"
-            @click="handleRefresh"
-            :loading="loadingState"
-          >
-            刷新
-          </a-button>
+          <a-button type="text" @click="handleRefresh" :loading="loadingState"> 刷新 </a-button>
         </div>
       </div>
 
@@ -41,30 +26,35 @@
           :class="taskCardClasses(task)"
           @click="handleTaskCardClick(task)"
         >
+          <!-- 状态指示器 -->
+          <div class="task-card-status-indicator" :class="`status-${task.status}`">
+            <span class="status-dot"></span>
+            <span class="status-text">{{ statusLabel(task.status) }}</span>
+          </div>
+
           <div class="task-card-header">
             <div class="task-card-info">
               <div class="task-card-title">{{ task.name }}</div>
-              <div class="task-card-subtitle">
+              <div class="task-card-meta">
                 <span class="task-card-id">#{{ formatTaskId(task.id) }}</span>
                 <span class="task-card-type">{{ taskTypeLabel(task.type) }}</span>
-                <span class="task-card-id" v-if="getTaskDuration(task)">{{ getTaskDuration(task) }}</span>
+                <span v-if="getTaskDuration(task)" class="task-card-duration">{{
+                  getTaskDuration(task)
+                }}</span>
               </div>
             </div>
-            <a-tag :color="statusColor(task.status)" class="task-card-status">
-              {{ statusLabel(task.status) }}
-
-            </a-tag>
           </div>
 
+          <!-- 进度信息 -->
           <div v-if="!isTaskCompleted(task)" class="task-card-progress">
             <a-progress
               :percent="Math.round(task.progress || 0)"
               :status="progressStatus(task.status)"
-              :stroke-width="6"
-              />
-            <!-- <span class="task-card-progress-value">{{ Math.round(task.progress || 0) }}%</span> -->
+              :stroke-width="4"
+              :show-info="false"
+            />
+            <span class="progress-text">{{ Math.round(task.progress || 0) }}%</span>
           </div>
-
           <div v-if="task.message && !isTaskCompleted(task)" class="task-card-message">
             {{ task.message }}
           </div>
@@ -72,25 +62,36 @@
             {{ task.error }}
           </div>
 
+          <!-- 底部信息 -->
           <div class="task-card-footer">
-            <div class="task-card-timestamps">
-              <span v-if="task.started_at">开始: {{ formatTime(task.started_at) }}</span>
-              <span v-if="task.completed_at">完成: {{ formatTime(task.completed_at) }}</span>
-              <span v-if="!task.started_at">创建: {{ formatTime(task.created_at, 'short') }}</span>
+            <div class="task-card-times">
+              <span v-if="task.started_at">开始 {{ formatTime(task.started_at, 'short') }}</span>
+              <span v-if="task.completed_at"
+                >· 完成 {{ formatTime(task.completed_at, 'short') }}</span
+              >
+              <span v-if="!task.started_at">创建 {{ formatTime(task.created_at, 'short') }}</span>
             </div>
             <div class="task-card-actions">
-              <a-button type="link" size="small" @click="handleDetail(task.id)" style="color: var(--gray-500);">
+              <a-button type="text" size="small" @click.stop="handleDetail(task.id)">
                 详情
               </a-button>
               <a-button
-                type="link"
+                type="text"
                 size="small"
                 danger
                 v-if="canCancel(task)"
-                :disabled="!canCancel(task)"
-                @click="handleCancel(task.id)"
+                @click.stop="handleCancel(task.id)"
               >
                 取消
+              </a-button>
+              <a-button
+                type="text"
+                size="small"
+                danger
+                v-if="isTaskCompleted(task)"
+                @click.stop="handleDelete(task.id, task.name)"
+              >
+                删除
               </a-button>
             </div>
           </div>
@@ -100,7 +101,9 @@
       <div v-else class="task-empty">
         <div class="task-empty-icon">🗂️</div>
         <div class="task-empty-title">暂无任务</div>
-        <div class="task-empty-subtitle">当你提交知识库导入或其他后台任务时，会在这里展示实时进度（仅展示最近的 100 个任务）。</div>
+        <div class="task-empty-subtitle">
+          当你提交知识库导入或其他后台任务时，会在这里展示实时进度（仅展示最近的 100 个任务）。
+        </div>
       </div>
     </div>
   </a-drawer>
@@ -242,7 +245,7 @@ function handleTaskCardClick(task) {
 }
 
 function handleDetail(taskId) {
-  const task = tasks.value.find(item => item.id === taskId)
+  const task = tasks.value.find((item) => item.id === taskId)
   if (!task) {
     return
   }
@@ -262,6 +265,19 @@ function handleDetail(taskId) {
 
 function handleCancel(taskId) {
   taskerStore.cancelTask(taskId)
+}
+
+function handleDelete(taskId, taskName) {
+  Modal.confirm({
+    title: '确认删除',
+    content: `确定要删除任务"${taskName}"吗？此操作不可恢复。`,
+    okText: '删除',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: () => {
+      taskerStore.deleteTask(taskId)
+    }
+  })
 }
 
 function formatTime(value, mode = 'full') {
@@ -305,15 +321,6 @@ function isTaskCompleted(task) {
   return ['success', 'failed', 'cancelled'].includes(task.status)
 }
 
-function getCompletionIcon(status) {
-  const icons = {
-    success: '✓',
-    failed: '✗',
-    cancelled: '○'
-  }
-  return icons[status] || '?'
-}
-
 function statusLabel(status) {
   const map = {
     pending: '等待中',
@@ -347,7 +354,6 @@ function progressStatus(status) {
 function canCancel(task) {
   return ['pending', 'running', 'queued'].includes(task.status) && !task.cancel_requested
 }
-
 </script>
 <style scoped lang="less">
 .task-center {
@@ -400,85 +406,155 @@ function canCancel(task) {
 }
 
 .task-card {
-  background: var(--gray-25);
-  border: 1px solid var(--gray-100);
-  border-radius: 12px;
-  padding: 16px 18px;
+  background: var(--gray-0);
+  border: 1px solid var(--gray-200);
+  border-radius: 10px;
+  padding: 14px 16px;
   transition: all 0.2s ease;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  // box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  gap: 10px;
+  position: relative;
 }
 
 .task-card:hover {
-  border-color: var(--gray-200);;
+  border-color: var(--gray-300);
+  box-shadow: 0 2px 8px var(--shadow-1);
+}
+
+/* 状态指示器 */
+.task-card-status-indicator {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-pending .status-dot {
+  background: var(--color-info-500);
+}
+.status-pending .status-text {
+  color: var(--color-info-500);
+}
+
+.status-queued .status-dot {
+  background: var(--color-info-500);
+}
+.status-queued .status-text {
+  color: var(--color-info-500);
+}
+
+.status-running .status-dot {
+  background: var(--color-success-500);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+.status-running .status-text {
+  color: var(--color-success-500);
+}
+
+.status-success .status-dot {
+  background: var(--color-success-500);
+}
+.status-success .status-text {
+  color: var(--color-success-500);
+}
+
+.status-failed .status-dot {
+  background: var(--color-error-500);
+}
+.status-failed .status-text {
+  color: var(--color-error-500);
+}
+
+.status-cancelled .status-dot {
+  background: var(--gray-500);
+}
+.status-cancelled .status-text {
+  color: var(--gray-600);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(0.9);
+  }
 }
 
 .task-card-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
+  padding-right: 80px; /* 为状态指示器留出空间 */
 }
 
 .task-card-info {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  min-width: 0;
+  gap: 5px;
 }
 
 .task-card-title {
   font-size: 15px;
   font-weight: 600;
   color: var(--gray-900);
-  line-height: 1.3;
-  // word-break: break-word;
+  line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
   overflow: hidden;
 }
 
-.task-card-subtitle {
+.task-card-meta {
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   font-size: 12px;
-  color: var(--gray-600);
+  color: var(--gray-500);
 }
 
 .task-card-id {
-  letter-spacing: 0.04em;
+  font-family: 'SF Mono', 'Monaco', monospace;
+  letter-spacing: 0.03em;
 }
 
 .task-card-type {
-  padding: 0 8px;
-  border-radius: 999px;
-  background-color: var(--gray-100);
-  color: var(--gray-500);
-  line-height: 20px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--gray-100);
+  font-size: 11px;
 }
 
-.task-card-status {
-  margin-top: 2px;
+.task-card-duration {
+  color: var(--gray-400);
 }
 
 .task-card-progress {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .task-card-progress :deep(.ant-progress) {
   flex: 1;
 }
 
-.task-card-progress-value {
+.progress-text {
   font-size: 12px;
   font-weight: 500;
   color: var(--gray-500);
-  width: 48px;
+  min-width: 36px;
   text-align: right;
 }
 
@@ -501,105 +577,35 @@ function canCancel(task) {
 }
 
 .task-card-footer {
-  margin-top: 2px;
   display: flex;
   justify-content: space-between;
-  align-items: flex-end;
-  gap: 16px;
+  align-items: center;
+  padding-top: 4px;
+  border-top: 1px solid var(--gray-100);
 }
 
-.task-card-timestamps {
+.task-card-times {
   display: flex;
-  flex-direction: row;
-  gap: 10px;
+  gap: 6px;
   font-size: 12px;
   color: var(--gray-400);
 }
 
 .task-card-actions {
   display: flex;
-  gap: 6px;
+  gap: 2px;
 }
 
-.task-card-completion {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 14px;
-  border-radius: 8px;
-  background: var(--gray-25);
-  border: 1px solid var(--gray-100);
-}
-
-.completion-badge {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.completion-badge--success {
-  color: var(--color-success-500);
-}
-
-.completion-badge--success .completion-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--color-success-50);
-  font-size: 14px;
-}
-
-.completion-badge--failed {
-  color: var(--color-error-500);
-}
-
-.completion-badge--failed .completion-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--color-error-50);
-  font-size: 14px;
-}
-
-.completion-badge--cancelled {
-  color: var(--gray-500);
-}
-
-.completion-badge--cancelled .completion-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: var(--gray-50);
-  font-size: 14px;
-}
-
-.task-duration {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.task-card-actions :deep(.ant-btn) {
+  height: 28px;
+  padding: 0 10px;
   font-size: 12px;
   color: var(--gray-500);
 }
 
-.duration-label {
-  font-weight: 500;
-}
-
-.duration-value {
-  font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
-  font-weight: 600;
-  color: var(--gray-600);
+.task-card-actions :deep(.ant-btn:hover) {
+  color: var(--gray-700);
+  background: var(--gray-50);
 }
 
 .task-empty {

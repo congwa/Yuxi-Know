@@ -54,10 +54,16 @@ export const useTaskerStore = defineStore('tasker', () => {
   const statusCounts = computed(() => summary.value?.status_counts || {})
 
   const activeCount = computed(() =>
-    Array.from(ACTIVE_STATUSES).reduce((count, status) => count + (statusCounts.value?.[status] || 0), 0)
+    Array.from(ACTIVE_STATUSES).reduce(
+      (count, status) => count + (statusCounts.value?.[status] || 0),
+      0
+    )
   )
   const failedCount = computed(() =>
-    Array.from(FAILED_STATUSES).reduce((count, status) => count + (statusCounts.value?.[status] || 0), 0)
+    Array.from(FAILED_STATUSES).reduce(
+      (count, status) => count + (statusCounts.value?.[status] || 0),
+      0
+    )
   )
   const successCount = computed(() => statusCounts.value?.success || 0)
   const totalCount = computed(() => summary.value?.total || 0)
@@ -65,7 +71,7 @@ export const useTaskerStore = defineStore('tasker', () => {
   function upsertTask(rawTask) {
     if (!rawTask || !rawTask.id) return
     const task = toTask(rawTask)
-    const index = tasks.value.findIndex(item => item.id === task.id)
+    const index = tasks.value.findIndex((item) => item.id === task.id)
     if (index >= 0) {
       tasks.value.splice(index, 1, { ...tasks.value[index], ...task })
     } else {
@@ -115,6 +121,22 @@ export const useTaskerStore = defineStore('tasker', () => {
     } catch (error) {
       console.error(`取消任务 ${taskId} 失败`, error)
       message.error(error?.message || '取消任务失败')
+    }
+  }
+
+  async function deleteTask(taskId) {
+    if (!taskId) return
+    try {
+      await taskerApi.deleteTask(taskId)
+      message.success('删除任务成功')
+      // 从本地列表中移除
+      const index = tasks.value.findIndex((item) => item.id === taskId)
+      if (index >= 0) {
+        tasks.value.splice(index, 1)
+      }
+    } catch (error) {
+      console.error(`删除任务 ${taskId} 失败`, error)
+      message.error(error?.message || '删除任务失败')
     }
   }
 
@@ -186,6 +208,7 @@ export const useTaskerStore = defineStore('tasker', () => {
     loadTasks,
     refreshTask,
     cancelTask,
+    deleteTask,
     registerQueuedTask,
     startPolling,
     stopPolling,

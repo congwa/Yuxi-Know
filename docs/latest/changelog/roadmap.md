@@ -7,20 +7,21 @@
 
 - 集成 LangFuse (观望) 添加用户日志与用户反馈模块，可以在 AgentView 中查看信息
 - 集成 neo4j mcp （或者自己构建工具）
-- 文档解析部分的 markdown 中的图片替换为内部可访问的链接 (2/4)
 - chat_model 的 call 需要异步
-- 优化chunk逻辑，移除 QA 分割，集成到普通分块中
-- 考虑修改附件的处理逻辑，考虑使用文件系统，将附件解析后放到文件系统中，智能体按需读取，用户可以使用 @ 来引用附件，例如 @file:reports.md 相较于现在的处理逻辑感觉会更加自然一点。在此之前可能还要考虑文件系统的后端支持问题
+- 优化智能体文件系统：
+    - 使用 CompositeBackend 和 自定义后端系统，链接 minio 中的知识库文件。提供除检索以外的方法
+    - 考虑修改附件的处理逻辑，考虑使用文件系统，将附件解析后放到文件系统中，智能体按需读取（当前是完全解析，放进上下文）
+    - 【后续】用户可以使用 @ 来引用附件，例如 @file:reports.md 相较于现在的处理逻辑感觉会更加自然一点。
 - skills 如何实现还需要继续调研
-- 优化 paddle 的命名，paddlex 有歧义，修改为 PP-StructureV3
 - 增加 paddle-vl 以及 deepseek-ocr 的支持（deepseek-ocr 已支持）
-- 将现有的 Milvus 的命名调整为通用 RAG
-- 将工具与知识库解耦，在 context 中就完成解耦，虽然最终都是在 Agent 中的 get_tools 中获取
 - 系统层面添加 apikey，在智能体、知识库调用中支持 apikey 以支持外部调用
-- 支持更多类型的文档源的导入功能
-- 支持 markitdown 或者 docling 的功能
-- 支持设置上传后自动入库（indexing）
-- 添加对于 lightrag 的结果解析
+- 支持更多类型的文档源的导入功能（支持后端配置的白名单的 URL 导入）
+- 部分场景应该使用默认模型作为默认值而不是空值
+- CommonRAG 添加更多检索类型，比如 BM25，关键词，grep 等
+- 文件上传解析后，如何提示用户需要入库
+- 检索测试中，添加问答
+- 丰富当前智能体的 Prompt，最好支持从 markdown 解析
+
 
 ### Bugs
 - 部分异常状态下，智能体的模型名称出现重叠[#279](https://github.com/xerrors/Yuxi-Know/issues/279)
@@ -28,10 +29,10 @@
 - DeepSeek 官方接口适配会出现问题
 - 部分推理后端与 langchain 的适配有问题：
 - 目前的知识库的图片存在公开访问风险
-- 工具传递给模型的时候，使用英文，但部分模型不支持中文函数名（如gpt-4o-mini）
-- 首页加载的问题
+- 工具传递给模型的时候，使用英文，但部分模型不支持中文函数名（如gpt-4o-mini，deepseek 官方接口）
 - 当前的 upload 图谱查询为同步操作，可能会导致页面卡顿
 - FileTable 的自动刷新失效
+- 生成基准测试会把所有的向量都计算一遍不合理
 
 ## v0.5
 
@@ -41,10 +42,22 @@
 - 优化 RAG 检索，支持根据文件 pattern 来检索（Agentic Mode）
 - 重构智能体对于“工具变更/模型变更”的处理逻辑，无需导入更复杂的中间件
 - 重构知识库的 Agentic 配置逻辑，与 Tools 解耦
+- 将工具与知识库解耦，在 context 中就完成解耦，虽然最终都是在 Agent 中的 get_tools 中获取
+- 优化chunk逻辑，移除 QA 分割，集成到普通分块中，并优化可视化逻辑
+- 重构知识库处理逻辑，分为 上传—解析—入库 三个阶段
+- 重构 MCP 相关配置，使用数据库来控制 [#469](https://github.com/xerrors/Yuxi-Know/pull/469)
+- 使用 docling 解析 office 文件（docx/xlsx/pptx）
+- 优化后端的依赖，减少镜像体积 [#428](https://github.com/xerrors/Yuxi-Know/issues/428)
+- 优化 liaghtrag 的知识库调用结果，提供 content/graph/both 多个选项
+- 优化数据库查询工具，可通过设计环境变量添加描述，让模型更好的调用
+- 优化任务组件，改用 postgresql 存储，并新增删除任务的接口
 
 ### 修复
 
 - 修复知识图谱上传的向量配置错误，并新增模型选择以及 batch size 选择
+- 修复部分场景下获取工具列表报错 [#470](https://github.com/xerrors/Yuxi-Know/pull/470)
+- 修改方法备注信息 [#478](https://github.com/xerrors/Yuxi-Know/pull/478)
+- 修复多次 human-in-the-loop 的渲染解析问题 [#453](https://github.com/xerrors/Yuxi-Know/issues/453) [#475](https://github.com/xerrors/Yuxi-Know/pull/475)
 
 ## v0.4
 

@@ -3,7 +3,7 @@
     v-model:open="visible"
     title="系统设置"
     width="90%"
-    :style="{ maxWidth: '1200px', minWidth: '320px', top: '3%' }"
+    :style="{ maxWidth: '980px', minWidth: '320px', top: '10%' }"
     :footer="null"
     @cancel="handleClose"
     class="settings-modal"
@@ -12,7 +12,7 @@
   >
     <div class="settings-container">
       <!-- 侧边栏 (Desktop) -->
-      <div class="settings-sider" v-if="!isMobile">
+      <div class="settings-sider">
         <div
           class="sider-item"
           :class="{ activesec: activeTab === 'base' }"
@@ -40,10 +40,28 @@
           <UserOutlined class="icon" />
           <span>用户管理</span>
         </div>
+        <div
+          class="sider-item"
+          :class="{ activesec: activeTab === 'department' }"
+          @click="activeTab = 'department'"
+          v-if="userStore.isSuperAdmin"
+        >
+          <TeamOutlined class="icon" />
+          <span>部门管理</span>
+        </div>
+        <div
+          class="sider-item"
+          :class="{ activesec: activeTab === 'mcp' }"
+          @click="activeTab = 'mcp'"
+          v-if="userStore.isSuperAdmin"
+        >
+          <ApiOutlined class="icon" />
+          <span>MCP 管理</span>
+        </div>
       </div>
 
       <!-- 顶部导航 (Mobile) -->
-      <div class="settings-mobile-nav" v-else>
+      <div class="settings-mobile-nav">
         <div
           class="nav-item"
           :class="{ active: activeTab === 'base' }"
@@ -68,6 +86,22 @@
         >
           用户管理
         </div>
+        <div
+          class="nav-item"
+          :class="{ active: activeTab === 'mcp' }"
+          @click="activeTab = 'mcp'"
+          v-if="userStore.isSuperAdmin"
+        >
+          MCP 管理
+        </div>
+        <div
+          class="nav-item"
+          :class="{ active: activeTab === 'department' }"
+          @click="activeTab = 'department'"
+          v-if="userStore.isSuperAdmin"
+        >
+          部门管理
+        </div>
       </div>
 
       <!-- 内容区域 -->
@@ -84,6 +118,14 @@
           <div v-show="activeTab === 'user'" v-if="userStore.isAdmin">
             <UserManagementComponent />
           </div>
+
+          <div v-show="activeTab === 'mcp'" v-if="userStore.isSuperAdmin">
+            <McpServersComponent />
+          </div>
+
+          <div v-show="activeTab === 'department'" v-if="userStore.isSuperAdmin">
+            <DepartmentManagementComponent />
+          </div>
         </div>
       </div>
     </div>
@@ -91,16 +133,20 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useUserStore } from '@/stores/user'
 import {
   SettingOutlined,
   CodeOutlined,
-  UserOutlined
+  UserOutlined,
+  ApiOutlined,
+  TeamOutlined
 } from '@ant-design/icons-vue'
 import BasicSettingsSection from '@/components/BasicSettingsSection.vue'
 import ModelProvidersComponent from '@/components/ModelProvidersComponent.vue'
 import UserManagementComponent from '@/components/UserManagementComponent.vue'
+import McpServersComponent from '@/components/McpServersComponent.vue'
+import DepartmentManagementComponent from '@/components/DepartmentManagementComponent.vue'
 
 const props = defineProps({
   visible: {
@@ -113,9 +159,6 @@ const emit = defineEmits(['update:visible', 'close'])
 
 const userStore = useUserStore()
 const activeTab = ref('base')
-const windowWidth = ref(window?.innerWidth || 0)
-
-const isMobile = computed(() => windowWidth.value <= 768)
 
 const visible = computed({
   get: () => props.visible,
@@ -126,28 +169,19 @@ const handleClose = () => {
   emit('close')
 }
 
-const updateWindowWidth = () => {
-  windowWidth.value = window?.innerWidth || 0
-}
-
-onMounted(() => {
-  window.addEventListener('resize', updateWindowWidth)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('resize', updateWindowWidth)
-})
-
 // 根据用户权限设置默认标签页
-watch(() => props.visible, (newVal) => {
-  if (newVal) {
-    if (userStore.isSuperAdmin) {
-      activeTab.value = 'base'
-    } else if (userStore.isAdmin) {
-      activeTab.value = 'user'
+watch(
+  () => props.visible,
+  (newVal) => {
+    if (newVal) {
+      if (userStore.isSuperAdmin) {
+        activeTab.value = 'base'
+      } else if (userStore.isAdmin) {
+        activeTab.value = 'user'
+      }
     }
   }
-})
+)
 </script>
 
 <style lang="less">
@@ -174,11 +208,16 @@ watch(() => props.visible, (newVal) => {
   display: flex;
   height: 100%;
   width: 100%;
+  gap: 6px;
+
+  @media (max-width: 900px) {
+    flex-direction: column;
+  }
 }
 
 /* Sidebar Styles - Matching SettingView.vue style */
 .settings-sider {
-  width: 140px;
+  width: 128px;
   height: 100%;
   padding-top: 8px;
   display: flex;
@@ -187,9 +226,13 @@ watch(() => props.visible, (newVal) => {
   gap: 8px;
   flex-shrink: 0;
 
+  @media (max-width: 900px) {
+    display: none;
+  }
+
   .sider-item {
     width: 100%;
-    padding: 6px 16px; /* Matches SettingView .sider > * */
+    padding: 6px 12px; /* Matches SettingView .sider > * */
     cursor: pointer;
     transition: all 0.1s; /* Matches SettingView */
     text-align: left;
@@ -199,6 +242,7 @@ watch(() => props.visible, (newVal) => {
     display: flex;
     align-items: center;
     gap: 10px;
+    margin-left: -20px;
 
     .icon {
       font-size: 14px; /* Slightly adjusted to align better, SettingView uses h() icon defaults */
@@ -219,16 +263,24 @@ watch(() => props.visible, (newVal) => {
 .settings-content-wrapper {
   flex: 1;
   height: 100%;
-  /* background-color: #fff; SettingView seems to use default background */
+  max-width: calc(100% - 128px);
+
+  @media (max-width: 900px) {
+    max-width: 100%;
+  }
 
   .settings-content {
-    padding: 0 20px; /* Matches SettingView .setting padding */
+    padding: 0; /* Matches SettingView .setting padding */
     // margin-bottom: 40px; /* Matches SettingView .setting margin-bottom */
     overflow-y: scroll;
-    height: 80vh;
+    height: 70vh;
+
+    @media (max-width: 900px) {
+      height: 70vh;
+      padding: 0px;
+    }
 
     h3 {
-      font-size: 18px;
       font-weight: 600;
       color: var(--gray-900);
       margin-bottom: 0.5em;
@@ -240,12 +292,16 @@ watch(() => props.visible, (newVal) => {
 
 /* Mobile Styles */
 .settings-mobile-nav {
-  display: flex;
+  display: none;
   overflow-x: auto;
   border-bottom: 1px solid var(--gray-150);
   background: var(--gray-0);
-  padding: 0 16px;
+  padding: 0;
   flex-shrink: 0;
+
+  @media (max-width: 900px) {
+    display: flex;
+  }
 
   .nav-item {
     padding: 12px 16px;

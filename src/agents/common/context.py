@@ -9,7 +9,10 @@ from typing import Annotated, get_args, get_origin
 import yaml
 
 from src import config as sys_config
+from src.services.mcp_service import get_mcp_server_names
 from src.utils import logger
+
+from .tools import gen_tool_info, get_buildin_tools
 
 
 @dataclass(kw_only=True)
@@ -39,7 +42,12 @@ class BaseContext:
         metadata={"name": "用户ID", "configurable": False, "description": "用来唯一标识一个用户"},
     )
 
-    system_prompt: str = field(
+    department_id: int | None = field(
+        default=None,
+        metadata={"name": "部门ID", "configurable": False, "description": "用来唯一标识一个部门"},
+    )
+
+    system_prompt: Annotated[str, {"__template_metadata__": {"kind": "prompt"}}] = field(
         default="You are a helpful assistant.",
         metadata={"name": "系统提示词", "description": "用来描述智能体的角色和行为"},
     )
@@ -50,6 +58,36 @@ class BaseContext:
             "name": "智能体模型",
             "options": [],
             "description": "智能体的驱动模型，建议选择 Agent 能力较强的模型，不建议使用小参数模型。",
+        },
+    )
+
+    tools: Annotated[list[dict], {"__template_metadata__": {"kind": "tools"}}] = field(
+        default_factory=list,
+        metadata={
+            "name": "工具",
+            "options": lambda: gen_tool_info(get_buildin_tools()),
+            "description": "内置的工具。",
+        },
+    )
+
+    knowledges: Annotated[list[str], {"__template_metadata__": {"kind": "knowledges"}}] = field(
+        default_factory=list,
+        metadata={
+            "name": "知识库",
+            "description": "知识库列表，可以在左侧知识库页面中创建知识库。",
+            "type": "list",  # Explicitly mark as list type for frontend if needed
+        },
+    )
+
+    mcps: Annotated[list[str], {"__template_metadata__": {"kind": "mcps"}}] = field(
+        default_factory=list,
+        metadata={
+            "name": "MCP服务器",
+            "options": lambda: get_mcp_server_names(),
+            "description": (
+                "MCP服务器列表，建议使用支持 SSE 的 MCP 服务器，"
+                "如果需要使用 uvx 或 npx 运行的服务器，也请在项目外部启动 MCP 服务器，并在项目中配置 MCP 服务器。"
+            ),
         },
     )
 
